@@ -30,15 +30,22 @@ def init_db():
             chat_id INTEGER,
             username TEXT,
             first_name TEXT,
-            status TEXT, -- 'REGISTERED', 'INVITED', 'ACCEPTED', 'CANCELLED', 'EXPIRED'
+            status TEXT, -- 'REGISTERED', 'INVITED', 'ACCEPTED', 'UNREGISTERED', 'EXPIRED'
             signup_time DATETIME,
             priority INTEGER, -- Used for sorting waitlist
             notified_at DATETIME,
             expires_at DATETIME,
+            guest_of_user_id INTEGER, -- ID of the speaker who invited this user
             FOREIGN KEY (event_id) REFERENCES events (id)
         )
     ''')
     
+    # Simple migration for existing DBs
+    try:
+        cursor.execute("ALTER TABLE registrations ADD COLUMN guest_of_user_id INTEGER")
+    except sqlite3.OperationalError:
+        pass # Column likely already exists
+
     # Speakers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS speakers (
