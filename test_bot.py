@@ -98,6 +98,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_chat.type = "private"
         update.effective_user.id = 456
+        update.effective_user.username = "user_456"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -135,6 +136,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_chat.type = "private"
         update.effective_user.id = 111
+        update.effective_user.username = "user_111"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -161,7 +163,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
 
     async def test_invite_guest_success(self):
         cursor = self.real_conn.cursor()
-        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'OPEN', 10, 'group_id')")
+        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'PRE_OPEN', 10, 'group_id')")
         event_id = cursor.lastrowid
         self.real_conn.commit()
 
@@ -192,7 +194,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
 
     async def test_invite_guest_not_speaker(self):
         cursor = self.real_conn.cursor()
-        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'OPEN', 10, 'group_id')")
+        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'PRE_OPEN', 10, 'group_id')")
         self.real_conn.commit()
 
         update = MagicMock()
@@ -278,7 +280,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
 
     async def test_invite_guest_already_invited(self):
         cursor = self.real_conn.cursor()
-        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'OPEN', 10, 'group_id')")
+        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'PRE_OPEN', 10, 'group_id')")
         event_id = cursor.lastrowid
         
         # Speaker already invited someone

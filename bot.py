@@ -4,7 +4,7 @@ import os
 import asyncio
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from models import init_db, get_db
@@ -23,6 +23,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is not set")
 
+ADMIN_IDS = {int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()}
+
 # Global scheduler and application
 scheduler = None
 application = None
@@ -31,10 +33,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(messages.WELCOME_MESSAGE)
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        return True # For testing
-    member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
-    return member.status in ["creator", "administrator"]
+    return update.effective_user.id in ADMIN_IDS
 
 async def ensure_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -53,27 +52,27 @@ async def ensure_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     return False
 
-async def open_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
         return
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM events WHERE status = 'OPEN'")
+    cursor.execute("SELECT id FROM events WHERE status IN ('OPEN', 'PRE_OPEN')")
     if cursor.fetchone():
         await update.message.reply_text(messages.REGISTRATION_ALREADY_OPEN)
         conn.close()
         return
 
     try:
-        minutes = int(context.args[0])
+        hours = int(context.args[0])
         places = int(context.args[1])
         speakers_group_id = context.args[2]
         # Optional 4th arg for timeout, default 24
         timeout_hours = int(context.args[3]) if len(context.args) > 3 else 24
     except (IndexError, ValueError):
-        await update.message.reply_text(messages.USAGE_OPEN)
+        await update.message.reply_text(messages.USAGE_CREATE)
         conn.close()
         return
 
@@ -88,12 +87,34 @@ async def open_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    end_time = datetime.now() + timedelta(minutes=minutes)
     cursor.execute(
-        "INSERT INTO events (chat_id, status, total_places, speakers_group_id, waitlist_timeout_hours, end_time) VALUES (?, ?, ?, ?, ?, ?)",
-        (update.effective_chat.id, 'OPEN', places, str(actual_group_id), timeout_hours, end_time)
+        "INSERT INTO events (chat_id, status, total_places, speakers_group_id, waitlist_timeout_hours, registration_duration_hours) VALUES (?, ?, ?, ?, ?, ?)",
+        (update.effective_chat.id, 'PRE_OPEN', places, str(actual_group_id), timeout_hours, hours)
     )
-    event_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(messages.EVENT_CREATED)
+
+async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE status = 'PRE_OPEN' ORDER BY id DESC LIMIT 1")
+    event = cursor.fetchone()
+    
+    if not event:
+        await update.message.reply_text(messages.NO_PRE_OPEN_EVENT)
+        conn.close()
+        return
+
+    duration_hours = event['registration_duration_hours']
+    end_time = datetime.now() + timedelta(hours=duration_hours)
+    
+    cursor.execute("UPDATE events SET status = 'OPEN', end_time = ? WHERE id = ?", (end_time, event['id']))
     conn.commit()
     conn.close()
 
@@ -101,13 +122,13 @@ async def open_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
         close_registration_job,
         'date',
         run_date=end_time,
-        args=[event_id, update.effective_chat.id],
-        id=f"close_{event_id}",
+        args=[event['id'], update.effective_chat.id],
+        id=f"close_{event['id']}",
         replace_existing=True
     )
 
     await update.message.reply_text(
-        messages.REGISTRATION_OPENED.format(places=places, end_time=end_time.strftime('%H:%M:%S')),
+        messages.REGISTRATION_OPENED.format(places=event['total_places'], end_time=end_time.strftime('%H:%M:%S')),
         parse_mode='Markdown'
     )
 
@@ -139,7 +160,7 @@ async def close_registration_job(event_id, chat_id):
     logging.info(f"Closing registration for event {event_id}")
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT total_places FROM events WHERE id = ?", (event_id,))
+    cursor.execute("SELECT total_places, speakers_group_id FROM events WHERE id = ?", (event_id,))
     event = cursor.fetchone()
     if not event:
         conn.close()
@@ -152,8 +173,23 @@ async def close_registration_job(event_id, chat_id):
     cursor.execute("SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status = 'ACCEPTED'", (event_id,))
     accepted_count = cursor.fetchone()['count']
     
-    places_available = max(0, total_places - accepted_count)
-    logging.info(f"Lottery: {total_places} total, {accepted_count} taken, {places_available} available.")
+    # Count speakers
+    speakers_count = 0
+    if event['speakers_group_id']:
+        try:
+            # Count members in the speakers group
+            # Note: This includes the bot and admins. 
+            group_count = await application.bot.get_chat_member_count(event['speakers_group_id'])
+            speakers_count += group_count
+        except Exception as e:
+            logging.error(f"Failed to count speakers in group {event['speakers_group_id']}: {e}")
+
+    # Add manual speakers
+    cursor.execute("SELECT COUNT(*) as count FROM speakers WHERE event_id = ?", (event_id,))
+    speakers_count += cursor.fetchone()['count']
+    
+    places_available = max(0, total_places - accepted_count - speakers_count)
+    logging.info(f"Lottery: {total_places} total, {accepted_count} taken, {speakers_count} speakers, {places_available} available.")
 
     cursor.execute(
         "SELECT * FROM registrations WHERE event_id = ? AND status = 'REGISTERED'",
@@ -169,7 +205,7 @@ async def close_registration_job(event_id, chat_id):
 
     random.shuffle(regs)
     winners = regs[:places_available]
-    waitlist = regs[places_available:]
+    lottery_losers = regs[places_available:]
     
     for reg in winners:
         cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg['id'],))
@@ -181,7 +217,15 @@ async def close_registration_job(event_id, chat_id):
         except Exception as e:
             logging.error(f"Failed to notify winner {reg['user_id']}: {e}")
 
-    for i, reg in enumerate(waitlist):
+    # Handle Waitlist Priorities
+    # Shift existing waitlist users down by len(lottery_losers)
+    if lottery_losers:
+        cursor.execute(
+            "UPDATE registrations SET priority = priority + ? WHERE event_id = ? AND status = 'WAITLIST'",
+            (len(lottery_losers), event_id)
+        )
+        
+    for i, reg in enumerate(lottery_losers):
         cursor.execute(
             "UPDATE registrations SET status = 'WAITLIST', priority = ? WHERE id = ?",
             (i, reg['id'])
@@ -195,8 +239,19 @@ async def close_registration_job(event_id, chat_id):
             logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
 
     conn.commit()
+
+    # Immediate Promotion if spots available
+    spots_remaining = places_available - len(winners)
+    if spots_remaining > 0:
+        logging.info(f"Promoting {spots_remaining} users from waitlist...")
+        # We need to loop because invite_next only invites one person.
+        # Note: invite_next logic relies on 'WAITLIST' status.
+        # Ensure we call it enough times.
+        for _ in range(spots_remaining):
+            await invite_next(event_id)
+
     conn.close()
-    await application.bot.send_message(chat_id, messages.REGISTRATION_CLOSED_SUMMARY.format(winners=len(winners), waitlist=len(waitlist)))
+    await application.bot.send_message(chat_id, messages.REGISTRATION_CLOSED_SUMMARY.format(winners=len(winners), waitlist=len(lottery_losers)))
 
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private(update, context):
@@ -264,6 +319,11 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
+    if event['status'] == 'PRE_OPEN':
+        await update.message.reply_text(messages.NO_OPEN_REGISTRATION)
+        conn.close()
+        return
+
     if event['status'] == 'OPEN':
         cursor.execute(
             "INSERT INTO registrations (event_id, user_id, chat_id, username, first_name, status, signup_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -312,6 +372,12 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not event:
         await update.message.reply_text(messages.NO_EVENT_FOUND)
+        conn.close()
+        return
+
+    # Check state - only allow in PRE_OPEN
+    if event['status'] != 'PRE_OPEN':
+        await update.message.reply_text(messages.INVITE_ONLY_PRE_OPEN)
         conn.close()
         return
 
@@ -400,6 +466,33 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    event = cursor.fetchone()
+
+    # Check if user is a speaker
+    if event:
+        is_speaker = False
+        if event['speakers_group_id']:
+            try:
+                member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+                if member.status in ["member", "administrator", "creator"]:
+                    is_speaker = True
+            except Exception as e:
+                logging.error(f"Error checking speaker group membership: {e}")
+
+        if not is_speaker and update.effective_user.username:
+            cursor.execute(
+                "SELECT id FROM speakers WHERE event_id = ? AND username = ?",
+                (event['id'], update.effective_user.username.lower())
+            )
+            if cursor.fetchone():
+                is_speaker = True
+        
+        if is_speaker:
+            await update.message.reply_text(messages.SPEAKER_UNREGISTER_ERROR)
+            conn.close()
+            return
+
     cursor.execute(
         "SELECT * FROM registrations WHERE user_id = ? AND status IN ('ACCEPTED', 'INVITED', 'WAITLIST', 'REGISTERED') ORDER BY id DESC LIMIT 1",
         (update.effective_user.id,)
@@ -427,7 +520,7 @@ async def invite_next(event_id):
     
     cursor.execute("SELECT waitlist_timeout_hours FROM events WHERE id = ?", (event_id,))
     event = cursor.fetchone()
-    timeout_hours = event['waitlist_timeout_hours'] if event else 24
+    timeout_hours = event['waitlist_timeout_hours'] if event and event['waitlist_timeout_hours'] is not None else 24
 
     cursor.execute(
         "SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC LIMIT 1",
@@ -512,20 +605,59 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
+    
+    # Check if user is a speaker first
+    is_speaker = False
+    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    event = cursor.fetchone()
+    
+    if event:
+        if event['speakers_group_id']:
+            try:
+                member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+                if member.status in ["member", "administrator", "creator"]:
+                    is_speaker = True
+            except Exception as e:
+                logging.error(f"Error checking speaker group: {e}")
+
+        if not is_speaker and update.effective_user.username:
+            cursor.execute(
+                "SELECT id FROM speakers WHERE event_id = ? AND username = ?",
+                (event['id'], update.effective_user.username.lower())
+            )
+            if cursor.fetchone():
+                is_speaker = True
+
     cursor.execute(
         "SELECT r.*, e.status as event_status FROM registrations r JOIN events e ON r.event_id = e.id WHERE r.user_id = ? ORDER BY r.id DESC LIMIT 1",
         (update.effective_user.id,)
     )
     reg = cursor.fetchone()
     
-    if not reg:
+    status_map = {
+        'REGISTERED': messages.STATUS_REGISTERED,
+        'INVITED': messages.STATUS_INVITED,
+        'ACCEPTED': messages.STATUS_ACCEPTED,
+        'WAITLIST': messages.STATUS_WAITLIST,
+        'UNREGISTERED': messages.STATUS_UNREGISTERED,
+        'EXPIRED': messages.STATUS_EXPIRED
+    }
+
+    if is_speaker:
+        display_status = messages.STATUS_SPEAKER
+        msg = messages.STATUS_MSG.format(status=display_status)
+    elif not reg:
         await update.message.reply_text(messages.NOT_REGISTERED)
+        conn.close()
+        return
     else:
-        msg = messages.STATUS_MSG.format(status=reg['status'])
+        display_status = status_map.get(reg['status'], reg['status'])
+        msg = messages.STATUS_MSG.format(status=display_status)
         if reg['status'] == 'WAITLIST':
             cursor.execute("SELECT COUNT(*) as pos FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND priority < ?", (reg['event_id'], reg['priority']))
             msg += messages.WAITLIST_POSITION.format(position=cursor.fetchone()['pos'] + 1)
-        await update.message.reply_text(msg)
+    
+    await update.message.reply_text(msg)
     conn.close()
 
 async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -568,6 +700,21 @@ async def post_init(app):
     scheduler = AsyncIOScheduler()
     scheduler.start()
     logging.info("Scheduler started in post_init")
+
+    # Set bot commands menu
+    commands = [
+        BotCommand("start", messages.DESC_START),
+        BotCommand("register", messages.DESC_REGISTER),
+        BotCommand("status", messages.DESC_STATUS),
+        BotCommand("unregister", messages.DESC_UNREGISTER),
+        BotCommand("list", messages.DESC_LIST),
+        BotCommand("invite", messages.DESC_INVITE),
+        BotCommand("create", messages.DESC_CREATE),
+        BotCommand("open", messages.DESC_OPEN),
+        BotCommand("close", messages.DESC_CLOSE),
+    ]
+    await app.bot.set_my_commands(commands)
+    logging.info("Bot commands menu set")
     
     conn = get_db()
     cursor = conn.cursor()
@@ -603,7 +750,8 @@ def main():
     application = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("open", open_registration))
+    application.add_handler(CommandHandler("create", create_event))
+    application.add_handler(CommandHandler("open", open_event_command))
     application.add_handler(CommandHandler("close", close_registration_command))
     application.add_handler(CommandHandler("register", register))
     application.add_handler(CommandHandler("invite", invite_guest))

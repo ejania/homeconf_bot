@@ -1,7 +1,8 @@
 import sqlite3
+import os
 from datetime import datetime
 
-DB_PATH = "bot_data.db"
+DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -17,6 +18,7 @@ def init_db():
             speakers_group_id TEXT,
             waitlist_timeout_hours INTEGER,
             end_time DATETIME,
+            registration_duration_hours INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -45,6 +47,11 @@ def init_db():
         cursor.execute("ALTER TABLE registrations ADD COLUMN guest_of_user_id INTEGER")
     except sqlite3.OperationalError:
         pass # Column likely already exists
+
+    try:
+        cursor.execute("ALTER TABLE events ADD COLUMN registration_duration_hours INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
     # Speakers table
     cursor.execute('''

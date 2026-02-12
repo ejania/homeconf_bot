@@ -25,17 +25,22 @@ A Telegram bot designed to handle event registrations with a fair lottery system
 - `/list` - Shows a summary of the current event's participation (spots filled, waitlist size).
 
 ### Admin Commands
-- `/open <minutes> <places> <speakers_group_id> [timeout_hours]` - Opens registration for an event.
-    - `minutes`: How long the registration pool remains open.
-    - `places`: Total number of available spots.
-    - `speakers_group_id`: The ID or @username of the group containing speakers (hidden from users).
-    - `timeout_hours` (Optional): How long a waitlist user has to accept an invitation (default is 24).
-- `/close` - Manually close the registration early and immediately run the lottery.
+- `/create <hours> <places> <speakers_group_id> [timeout_hours]` - Initialize a new event.
+    - `hours`: Duration of registration in hours (once opened).
+    - `places`: Total number of spots available.
+    - `speakers_group_id`: The ID or @username of the speakers group.
+    - Sets the status to `PRE_OPEN`. Speakers can invite guests.
+- `/open` - Switch event from `PRE_OPEN` to `OPEN`.
+    - Starts the countdown timer.
+    - Opens general registration `/register`.
+    - Speakers can no longer invite guests.
+- `/close` - Manually close registration (triggers the lottery immediately).
 
 ## How it Works
 
-1. **Registration Phase:** When an admin opens an event, users can `/register`. The bot checks if they are in the designated speakers group to prevent double-booking spots. Speakers can use `/invite @username` to bring a guest.
-2. **The Lottery:** Once the timer expires (or `/close` is called), the bot shuffles the pool of registrants. Spots occupied by speaker guests are deducted from the total. The first `N` users (where `N` is available places) are marked as `ACCEPTED` and notified. All others are moved to the `WAITLIST`.
+1. **Pre-Open Phase:** Admin creates an event using `/create`. Status becomes `PRE_OPEN`. Speakers can use `/invite` to add their guests. General public cannot register yet.
+2. **Registration Phase:** Admin runs `/open`. Status becomes `OPEN`. Speakers can no longer invite guests. Public can `/register`.
+3. **The Lottery:** Once the timer expires (or `/close` is called), the bot shuffles the pool of registrants. Spots occupied by speaker guests are deducted from the total. The first `N` users (where `N` is available places) are marked as `ACCEPTED` and notified. All others are moved to the `WAITLIST`.
 3. **The Waitlist:** If an accepted user unregisters, the bot finds the next person on the waitlist and sends them an invitation with "Accept" and "Decline" buttons.
 4. **Invitation Timeout:** If an invited user doesn't respond within the `timeout_hours` window, their invitation expires, and the bot automatically invites the next person in line.
 

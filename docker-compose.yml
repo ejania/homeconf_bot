@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    container_name: homeconf_bot
+    restart: always
+    environment:
+      - DB_PATH=/app/data/bot_data.db
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
