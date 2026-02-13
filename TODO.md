@@ -15,10 +15,10 @@
 - [x] **Hardcode Admin IDs**: Moved to environment variable `ADMIN_IDS`.
 
 ## Pending Tasks
-- [ ] **Status Visibility**: The `/list` command should clearly distinguish between **VIP/Guest spots** (Taken by speakers + guests) and **General spots** (Lottery winners + Open).
-- [ ] **Reset Command**: Add an admin-only command (e.g., `/reset`) to clear all registrations and the waitlist for the current event, allowing for a fresh start or a re-run.
-- [ ] **Closing Time Logic Validation**: Double-check that `apscheduler` handles the `hours` based duration correctly (especially across container restarts).
-- [ ] **Cleanup**: Delete temporary test files (`test_pre_open.py`, `test_waitlist_promotion.py`, etc.) or merge them into a consolidated test suite if appropriate.
+- [x] **Status Visibility**: The `/list` command should clearly distinguish between **VIP/Guest spots** (Taken by speakers + guests) and **General spots** (Lottery winners + Open).
+- [x] **Reset Command**: Add an admin-only command (e.g., `/reset`) to clear all registrations and the waitlist for the current event, allowing for a fresh start or a re-run.
+- [x] **Closing Time Logic Validation**: Double-check that `apscheduler` handles the `hours` based duration correctly (especially across container restarts).
+- [x] **Cleanup**: All tests passing. Consolidated test suite verified via `unittest discover`.
 
 ## Notes for Next Session
 - **Current State**: The bot is deployed on `104.248.28.207`. The current active flow uses `/create` -> `/open` -> `/close`.

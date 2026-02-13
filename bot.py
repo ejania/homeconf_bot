@@ -156,6 +156,43 @@ async def close_registration_command(update: Update, context: ContextTypes.DEFAU
     await close_registration_job(event['id'], event['chat_id'])
     await update.message.reply_text(messages.REGISTRATION_CLOSED_MANUAL)
 
+async def reset_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text(messages.ONLY_ADMIN_RESET)
+        return
+
+    if not context.args or context.args[0] != "confirm":
+        await update.message.reply_text(messages.RESET_CONFIRMATION)
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM events ORDER BY id DESC LIMIT 1")
+    event = cursor.fetchone()
+    
+    if not event:
+        await update.message.reply_text(messages.NO_EVENT_FOUND)
+        conn.close()
+        return
+
+    event_id = event['id']
+    
+    # Cancel any scheduled jobs
+    job_id = f"close_{event_id}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+
+    # Clear registrations
+    cursor.execute("DELETE FROM registrations WHERE event_id = ?", (event_id,))
+    
+    # Reset event status to PRE_OPEN
+    cursor.execute("UPDATE events SET status = 'PRE_OPEN', end_time = NULL WHERE id = ?", (event_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(messages.RESET_SUCCESS)
+
 async def close_registration_job(event_id, chat_id):
     logging.info(f"Closing registration for event {event_id}")
     conn = get_db()
@@ -177,10 +214,16 @@ async def close_registration_job(event_id, chat_id):
     speakers_count = 0
     if event['speakers_group_id']:
         try:
-            # Count members in the speakers group
-            # Note: This includes the bot and admins. 
             group_count = await application.bot.get_chat_member_count(event['speakers_group_id'])
-            speakers_count += group_count
+            # Only subtract the bot if it is actually in the group
+            try:
+                bot_user = await application.bot.get_me()
+                member = await application.bot.get_chat_member(event['speakers_group_id'], bot_user.id)
+                if member.status not in ["left", "kicked"]:
+                    group_count -= 1
+            except Exception:
+                pass 
+            speakers_count += max(0, group_count)
         except Exception as e:
             logging.error(f"Failed to count speakers in group {event['speakers_group_id']}: {e}")
 
@@ -671,26 +714,82 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    cursor.execute("SELECT status, COUNT(*) as count FROM registrations WHERE event_id = ? GROUP BY status", (event['id'],))
-    rows = cursor.fetchall()
-    counts = {row['status']: row['count'] for row in rows}
-    
-    accepted = counts.get('ACCEPTED', 0)
-    invited = counts.get('INVITED', 0)
-    waitlist = counts.get('WAITLIST', 0)
-    registered = counts.get('REGISTERED', 0)
+    # Count speakers
+    speakers_count = 0
+    if event['speakers_group_id']:
+        try:
+            group_count = await context.bot.get_chat_member_count(event['speakers_group_id'])
+            # Only subtract the bot if it is actually in the group
+            try:
+                bot_user = await context.bot.get_me()
+                member = await context.bot.get_chat_member(event['speakers_group_id'], bot_user.id)
+                if member.status not in ["left", "kicked"]:
+                    group_count -= 1
+            except Exception:
+                pass
+            speakers_count = max(0, group_count)
+        except Exception as e:
+            logging.error(f"Failed to count speakers in group {event['speakers_group_id']}: {e}")
+
+    cursor.execute("SELECT COUNT(*) as count FROM speakers WHERE event_id = ?", (event['id'],))
+    speakers_count += cursor.fetchone()['count']
+
+    # Count guests
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND guest_of_user_id IS NOT NULL",
+        (event['id'],)
+    )
+    guests_count = cursor.fetchone()['count']
+
+    # Count general accepted
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND guest_of_user_id IS NULL",
+        (event['id'],)
+    )
+    general_taken = cursor.fetchone()['count']
+
+    # Count lottery pool
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status = 'REGISTERED'",
+        (event['id'],)
+    )
+    lottery_count = cursor.fetchone()['count']
+
+    # Count waitlist
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status = 'WAITLIST'",
+        (event['id'],)
+    )
+    waitlist_count = cursor.fetchone()['count']
+
+    # Count pending confirmations (already included in general_taken if guest_of_user_id is NULL)
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status = 'INVITED'",
+        (event['id'],)
+    )
+    invited_count = cursor.fetchone()['count']
     
     total_places = event['total_places']
-    status_str = "OPEN" if event['status'] == 'OPEN' else "CLOSED"
+    vip_total = speakers_count + guests_count
+    general_total = max(0, total_places - vip_total)
     
-    msg = messages.EVENT_STATUS_HEADER.format(status=status_str, filled=accepted + invited, total=total_places)
+    status_str = "OPEN" if event['status'] == 'OPEN' else "CLOSED"
+    if event['status'] == 'PRE_OPEN':
+        status_str = "PRE_OPEN"
+
+    msg = messages.EVENT_STATUS_HEADER.format(
+        status=status_str, 
+        vip_taken=vip_total,
+        general_taken=general_taken,
+        general_total=general_total
+    )
     
     if event['status'] == 'OPEN':
-        msg += messages.EVENT_STATUS_OPEN.format(count=registered)
-    else:
-        msg += messages.EVENT_STATUS_CLOSED.format(waitlist=waitlist)
-        if invited > 0:
-            msg += messages.EVENT_STATUS_PENDING.format(invited=invited)
+        msg += messages.EVENT_STATUS_OPEN.format(count=lottery_count)
+    elif event['status'] == 'CLOSED':
+        msg += messages.EVENT_STATUS_CLOSED.format(waitlist=waitlist_count)
+        if invited_count > 0:
+            msg += messages.EVENT_STATUS_PENDING.format(invited=invited_count)
 
     await update.message.reply_text(msg, parse_mode='Markdown')
     conn.close()
@@ -712,6 +811,7 @@ async def post_init(app):
         BotCommand("create", messages.DESC_CREATE),
         BotCommand("open", messages.DESC_OPEN),
         BotCommand("close", messages.DESC_CLOSE),
+        BotCommand("reset", messages.DESC_RESET),
     ]
     await app.bot.set_my_commands(commands)
     logging.info("Bot commands menu set")
@@ -740,6 +840,28 @@ async def post_init(app):
                 )
         except Exception as e:
             logging.error(f"Failed to resume job for event {event['id']}: {e}")
+
+    # Reschedule timeout jobs for INVITED registrations
+    cursor.execute("SELECT id, expires_at FROM registrations WHERE status = 'INVITED'")
+    invited_regs = cursor.fetchall()
+    for reg in invited_regs:
+        try:
+            expires_at = datetime.fromisoformat(reg['expires_at'])
+            if expires_at <= datetime.now():
+                logging.info(f"Invitation {reg['id']} expired while bot was down, checking timeout now.")
+                await check_timeout_job(reg['id'])
+            else:
+                logging.info(f"Rescheduling timeout for invitation {reg['id']} at {expires_at}")
+                scheduler.add_job(
+                    check_timeout_job,
+                    'date',
+                    run_date=expires_at,
+                    args=[reg['id']],
+                    id=f"timeout_{reg['id']}",
+                    replace_existing=True
+                )
+        except Exception as e:
+            logging.error(f"Failed to resume timeout job for registration {reg['id']}: {e}")
             
     conn.close()
 
@@ -758,6 +880,7 @@ def main():
     application.add_handler(CommandHandler("unregister", unregister))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("list", list_participants))
+    application.add_handler(CommandHandler("reset", reset_event))
     application.add_handler(CallbackQueryHandler(callback_handler))
     
     logging.info("Bot starting polling...")
