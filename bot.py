@@ -246,6 +246,35 @@ async def close_registration_job(event_id, chat_id):
         conn.close()
         return
 
+    # Filter out speakers from the lottery pool to prevent double-dipping
+    valid_regs = []
+    for reg in regs:
+        is_speaker = False
+        # Check manual list
+        if reg['username']:
+            cursor.execute("SELECT id FROM speakers WHERE event_id = ? AND username = ?", (event_id, reg['username'].lower()))
+            if cursor.fetchone():
+                is_speaker = True
+            
+        # Check group membership
+        if not is_speaker and event['speakers_group_id']:
+             try:
+                 member = await application.bot.get_chat_member(event['speakers_group_id'], reg['user_id'])
+                 if member.status in ["member", "administrator", "creator"]:
+                     is_speaker = True
+             except Exception:
+                 pass
+        
+        if is_speaker:
+             logging.info(f"User {reg['user_id']} is a speaker, skipping lottery.")
+             # We mark them as accepted (or just leave them as registered but ignored? 
+             # If we leave them as REGISTERED, they might get confused. 
+             # Let's just ignore them for the lottery. They are speakers.)
+        else:
+             valid_regs.append(reg)
+    
+    regs = valid_regs
+
     random.shuffle(regs)
     winners = regs[:places_available]
     lottery_losers = regs[places_available:]
@@ -464,10 +493,10 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     guest_username = context.args[0].lstrip('@')
     
-    # Check if guest is already registered
+    # Check if guest is already registered (case insensitive)
     cursor.execute(
-        "SELECT * FROM registrations WHERE event_id = ? AND username = ? AND status != 'UNREGISTERED'",
-        (event['id'], guest_username)
+        "SELECT * FROM registrations WHERE event_id = ? AND LOWER(username) = ? AND status != 'UNREGISTERED'",
+        (event['id'], guest_username.lower())
     )
     existing_reg = cursor.fetchone()
     
