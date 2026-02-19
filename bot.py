@@ -128,9 +128,12 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stdout, stderr = await process.communicate()
         
         if process.returncode == 0:
+            count = len(stdout.decode().splitlines()) # Estimate count or parse output
+            log_action(event_id, None, "System", "SPEAKERS_IMPORTED", f"Result: {stdout.decode().strip()}")
             logging.info(f"Imported speakers: {stdout.decode()}")
             await update.message.reply_text(f"✅ Speakers automatically imported!")
         else:
+            log_action(event_id, None, "System", "SPEAKERS_IMPORT_FAIL", f"Error: {stderr.decode().strip()}")
             logging.error(f"Error importing speakers: {stderr.decode()}")
             await update.message.reply_text("⚠️ There was an issue importing speakers. Are you sure you logged in to the userbot via SSH?")
     except Exception as e:
@@ -353,6 +356,7 @@ async def close_registration_job(event_id, chat_id):
             await invite_next(event_id)
 
     conn.close()
+    log_action(event_id, None, "System", "LOTTERY_COMPLETE", f"Winners: {len(winners)}, Waitlist: {len(lottery_losers)}")
     await application.bot.send_message(chat_id, messages.REGISTRATION_CLOSED_SUMMARY.format(winners=len(winners), waitlist=len(lottery_losers)))
 
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
