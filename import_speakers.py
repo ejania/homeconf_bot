@@ -29,7 +29,9 @@ async def main():
 
     # Log in and fetch members
     print("Initialize Telethon login...")
-    client = TelegramClient('userbot_session', API_ID, API_HASH)
+    # Use persistent path for session file
+    session_file = '/app/data/userbot_session'
+    client = TelegramClient(session_file, API_ID, API_HASH)
     
     await client.start()
     
