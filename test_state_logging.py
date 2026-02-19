@@ -2,7 +2,7 @@ import unittest
 import sqlite3
 from unittest.mock import patch, MagicMock, AsyncMock
 from models import init_db
-from bot import open_event_command, create_event, reset_event
+from bot import open_event_command, create_event, reset_event, invite_guest, unregister
 
 TEST_DB_PATH = ":memory:"
 
@@ -73,6 +73,14 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS speakers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                username TEXT,
+                FOREIGN KEY (event_id) REFERENCES events (id)
+            )
+        ''')
         self.real_conn.commit()
 
         # Add admin
@@ -126,6 +134,65 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         logs = cursor.fetchall()
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]['action'], "RESET_EVENT")
+
+    async def test_invite_guest_logs(self):
+        # Setup: Create event and speaker
+        cursor = self.real_conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, FOREIGN KEY (event_id) REFERENCES events (id))''') # Ensure table exists
+        cursor.execute("INSERT INTO events (status, total_places, speakers_group_id) VALUES ('PRE_OPEN', 10, 'group')")
+        event_id = cursor.lastrowid
+        cursor.execute("INSERT INTO speakers (event_id, username) VALUES (?, ?)", (event_id, "speaker"))
+        self.real_conn.commit()
+
+        update = MagicMock()
+        update.effective_user.id = 888
+        update.effective_user.username = "speaker"
+        update.effective_chat.type = "private"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.args = ["guest_user"]
+        context.bot.get_chat_member = AsyncMock() 
+
+        # Ensure ensure_private returns True (it's called in invite_guest)
+        # but mock only works if we patch it or pass context
+        # Actually invite_guest checks update.effective_chat.type which we set to 'private'
+        
+        # Test invite_guest
+        await invite_guest(update, context)
+        
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'INVITE_GUEST'")
+        logs = cursor.fetchall()
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]['details'], "Guest: guest_user")
+
+    async def test_unregister_logs(self):
+         # Setup: Create event and registration
+        cursor = self.real_conn.cursor()
+        cursor.execute("INSERT INTO events (status, total_places) VALUES ('OPEN', 10)")
+        event_id = cursor.lastrowid
+        cursor.execute("INSERT INTO registrations (event_id, user_id, status) VALUES (?, ?, 'REGISTERED')", (event_id, 777))
+        reg_id = cursor.lastrowid
+        self.real_conn.commit()
+        
+        update = MagicMock()
+        update.effective_user.id = 777
+        update.effective_user.username = "user777"
+        update.effective_chat.type = "private"
+        update.message.reply_text = AsyncMock()
+        
+        context = MagicMock()
+        # Mock get_chat_member to avoid error
+        context.bot.get_chat_member = AsyncMock()
+
+        await unregister(update, context)
+        
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'UNREGISTER'")
+        logs = cursor.fetchall()
+        self.assertEqual(len(logs), 1)
+        # Note: unregister creates a log, and details might contain "Old status: ..." if checking old_status
+        # In current unregister impl: log_action(..., 'UNREGISTER', f'Old status: {old_status}')
+        self.assertIn("Old status: REGISTERED", logs[0]['details'])
 
 if __name__ == '__main__':
     unittest.main()
