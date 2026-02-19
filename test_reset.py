@@ -67,6 +67,19 @@ class TestReset(unittest.IsolatedAsyncioTestCase):
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         ''')
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS action_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (event_id) REFERENCES events (id)
+            )
+        """)
+
         self.real_conn.commit()
 
         # Mock ADMIN_IDS
@@ -127,10 +140,10 @@ class TestReset(unittest.IsolatedAsyncioTestCase):
         
         # Verify DB state
         cursor.execute("SELECT status FROM events WHERE id = ?", (event_id,))
-        self.assertEqual(cursor.fetchone()['status'], 'PRE_OPEN')
+        self.assertEqual(cursor.fetchone()['status'], 'CANCELLED')
         
         cursor.execute("SELECT COUNT(*) as count FROM registrations WHERE event_id = ?", (event_id,))
-        self.assertEqual(cursor.fetchone()['count'], 0)
+        self.assertEqual(cursor.fetchone()['count'], 2)
         
         # Verify scheduler called
         self.mock_scheduler.remove_job.assert_called_once_with(f"close_{event_id}")

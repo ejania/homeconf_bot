@@ -52,6 +52,20 @@ async def ensure_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     return False
 
+
+def log_action(event_id, user_id, username, action, details=""):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO action_logs (event_id, user_id, username, action, details) VALUES (?, ?, ?, ?, ?)",
+            (event_id, user_id, username, action, details)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Failed to log action {action}: {e}")
+
 async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
@@ -92,6 +106,8 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (update.effective_chat.id, 'PRE_OPEN', places, str(actual_group_id), timeout_hours, hours)
     )
     conn.commit()
+    event_id = cursor.lastrowid
+    log_action(event_id, update.effective_user.id, update.effective_user.username, 'CREATE_EVENT', f'places={places}, hours={hours}')
     conn.close()
 
     await update.message.reply_text(messages.EVENT_CREATED)
@@ -116,6 +132,7 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     cursor.execute("UPDATE events SET status = 'OPEN', end_time = ? WHERE id = ?", (end_time, event['id']))
     conn.commit()
+    log_action(event['id'], update.effective_user.id, update.effective_user.username, 'OPEN_EVENT', f'end_time={end_time}')
     conn.close()
 
     scheduler.add_job(
@@ -182,13 +199,13 @@ async def reset_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
 
-    # Clear registrations
-    cursor.execute("DELETE FROM registrations WHERE event_id = ?", (event_id,))
+    # We no longer clear registrations, to keep logs and history intact
     
-    # Reset event status to PRE_OPEN
-    cursor.execute("UPDATE events SET status = 'PRE_OPEN', end_time = NULL WHERE id = ?", (event_id,))
+    # Retire the event by setting it to CANCELLED instead of PRE_OPEN
+    cursor.execute("UPDATE events SET status = 'CANCELLED', end_time = NULL WHERE id = ?", (event_id,))
     
     conn.commit()
+    log_action(event_id, update.effective_user.id, update.effective_user.username, 'RESET_EVENT', '')
     conn.close()
     
     await update.message.reply_text(messages.RESET_SUCCESS)
@@ -205,6 +222,7 @@ async def close_registration_job(event_id, chat_id):
     
     total_places = event['total_places']
     cursor.execute("UPDATE events SET status = 'CLOSED' WHERE id = ?", (event_id,))
+    log_action(event_id, None, None, 'CLOSE_REGISTRATION', 'Lottery started')
     
     # Count already accepted (e.g. guests)
     cursor.execute("SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status = 'ACCEPTED'", (event_id,))
@@ -374,6 +392,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (update.effective_user.id, update.effective_chat.id, update.effective_user.first_name, datetime.now(), pending_invite['id'])
             )
             conn.commit()
+            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_GUEST', 'Claimed guest spot')
             await update.message.reply_text(messages.GUEST_IDENTIFIED)
             conn.close()
             return
@@ -401,6 +420,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO registrations (event_id, user_id, chat_id, username, first_name, status, signup_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (event['id'], update.effective_user.id, update.effective_chat.id, update.effective_user.username, update.effective_user.first_name, 'REGISTERED', datetime.now())
         )
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER', 'Status: REGISTERED')
         try:
             await context.bot.send_message(update.effective_user.id, messages.REGISTER_SUCCESS_LOTTERY)
             if update.effective_chat.type != "private":
@@ -419,6 +439,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO registrations (event_id, user_id, chat_id, username, first_name, status, signup_time, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (event['id'], update.effective_user.id, update.effective_chat.id, update.effective_user.username, update.effective_user.first_name, 'WAITLIST', datetime.now(), max_p + 1)
         )
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER', 'Status: WAITLIST')
         try:
             await context.bot.send_message(update.effective_user.id, messages.REGISTER_WAITLIST.format(position=max_p + 2))
             if update.effective_chat.type != "private":
@@ -493,6 +514,22 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     guest_username = context.args[0].lstrip('@')
     
+    # Check if speaker tries to invite themselves
+    if update.effective_user.username and guest_username.lower() == update.effective_user.username.lower():
+        await update.message.reply_text(messages.ALREADY_SPEAKER)
+        conn.close()
+        return
+
+    # Check if guest is a speaker (manual list)
+    cursor.execute(
+        "SELECT id FROM speakers WHERE event_id = ? AND LOWER(username) = ?",
+        (event['id'], guest_username.lower())
+    )
+    if cursor.fetchone():
+        await update.message.reply_text(messages.GUEST_IS_SPEAKER.format(username=guest_username))
+        conn.close()
+        return
+
     # Check if guest is already registered (case insensitive)
     cursor.execute(
         "SELECT * FROM registrations WHERE event_id = ? AND LOWER(username) = ? AND status != 'UNREGISTERED'",
@@ -507,6 +544,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE registrations SET status = 'ACCEPTED', guest_of_user_id = ? WHERE id = ?",
                 (update.effective_user.id, existing_reg['id'])
             )
+            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Upgraded Guest: {guest_username}')
             await update.message.reply_text(messages.GUEST_UPGRADED.format(username=guest_username))
             try:
                 if existing_reg['user_id']:
@@ -527,6 +565,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?)",
             (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, datetime.now())
         )
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Guest: {guest_username}')
         await update.message.reply_text(messages.GUEST_INVITED_NEW.format(username=guest_username))
 
     conn.commit()
@@ -577,8 +616,22 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     old_status = reg['status']
+    
+    if event['status'] == 'CLOSED' and old_status in ('ACCEPTED', 'INVITED'):
+        keyboard = [
+            [InlineKeyboardButton("Да, я не приду", callback_data=f"uyes_{reg['id']}"),
+             InlineKeyboardButton("Нет, я приду!", callback_data=f"uno_{reg['id']}")]
+        ]
+        await update.message.reply_text(
+            messages.UNREGISTER_CONFIRM,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        conn.close()
+        return
+
     cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg['id'],))
     conn.commit()
+    log_action(event['id'], update.effective_user.id, update.effective_user.username, 'UNREGISTER', f'Old status: {old_status}')
     await update.message.reply_text(messages.UNREGISTERED_SUCCESS)
     
     if old_status in ('ACCEPTED', 'INVITED'):
@@ -607,6 +660,7 @@ async def invite_next(event_id):
             (datetime.now(), expires_at, next_reg['id'])
         )
         conn.commit()
+        log_action(event_id, next_reg['user_id'], next_reg['username'], 'INVITE_NEXT', 'Waitlist invited')
         
         keyboard = [[InlineKeyboardButton("Accept", callback_data=f"acc_{next_reg['id']}"),
                      InlineKeyboardButton("Decline", callback_data=f"dec_{next_reg['id']}")]]
@@ -637,6 +691,7 @@ async def check_timeout_job(reg_id):
     if reg and reg['status'] == 'INVITED':
         cursor.execute("UPDATE registrations SET status = 'EXPIRED' WHERE id = ?", (reg_id,))
         conn.commit()
+        log_action(reg['event_id'], reg['user_id'], reg['username'], 'EXPIRE_INVITE', 'Waitlist invite expired')
         try:
             await application.bot.send_message(reg['user_id'], messages.INVITATION_EXPIRED)
         except: pass
@@ -655,18 +710,40 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM registrations WHERE id = ?", (reg_id,))
     reg = cursor.fetchone()
     
-    if not reg or reg['status'] != 'INVITED' or reg['user_id'] != update.effective_user.id:
+    if not reg or reg['user_id'] != update.effective_user.id:
         await query.edit_message_text(messages.INVALID_INVITATION)
         conn.close()
         return
             
-    if action == "acc":
-        cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg_id,))
-        await query.edit_message_text(messages.INVITATION_ACCEPTED)
-    else:
-        cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
-        await query.edit_message_text(messages.INVITATION_DECLINED)
-        await invite_next(reg['event_id'])
+    if action in ("acc", "dec"):
+        if reg['status'] != 'INVITED':
+            await query.edit_message_text(messages.INVALID_INVITATION)
+            conn.close()
+            return
+            
+        if action == "acc":
+            cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg_id,))
+            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, 'CALLBACK_ACCEPT', '')
+            await query.edit_message_text(messages.INVITATION_ACCEPTED)
+        else:
+            cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
+            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, 'CALLBACK_DECLINE', '')
+            await query.edit_message_text(messages.INVITATION_DECLINED)
+            await invite_next(reg['event_id'])
+            
+    elif action == "uyes":
+        if reg['status'] == 'UNREGISTERED':
+            await query.edit_message_text(messages.UNREGISTERED_SUCCESS)
+        else:
+            old_status = reg['status']
+            cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
+            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, 'UNREGISTER', f'Confirmed unregister: {old_status}')
+            await query.edit_message_text(messages.UNREGISTERED_SUCCESS)
+            if old_status in ('ACCEPTED', 'INVITED'):
+                await invite_next(reg['event_id'])
+                
+    elif action == "uno":
+        await query.edit_message_text("Отлично, ждём тебя на конфе! 🎉")
             
     conn.commit()
     conn.close()

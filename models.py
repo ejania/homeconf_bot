@@ -63,6 +63,20 @@ def init_db():
         )
     ''')
     
+    # Action Logs table for persistent state-change logging
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS action_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,
+            user_id INTEGER,
+            username TEXT,
+            action TEXT,
+            details TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (event_id) REFERENCES events (id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 

@@ -1,10 +1,10 @@
 import unittest
 import sqlite3
-from unittest.mock import MagicMock, AsyncMock, patch
+import random
+from unittest.mock import patch, AsyncMock, MagicMock
+from models import init_db
 from bot import close_registration_job
-import messages
 
-# Use an in-memory database for testing
 TEST_DB_PATH = ":memory:"
 
 class MockConnection:
@@ -20,13 +20,14 @@ class MockConnection:
     def close(self):
         pass
 
-class TestSpeakerCount(unittest.IsolatedAsyncioTestCase):
+class TestLotteryRandomness(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.patcher = patch('bot.get_db')
         self.mock_get_db = self.patcher.start()
         
         self.real_conn = sqlite3.connect(TEST_DB_PATH)
         self.real_conn.row_factory = sqlite3.Row
+        
         self.mock_conn = MockConnection(self.real_conn)
         self.mock_get_db.return_value = self.mock_conn
         
@@ -39,7 +40,8 @@ class TestSpeakerCount(unittest.IsolatedAsyncioTestCase):
                 total_places INTEGER,
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
-                end_time DATETIME
+                end_time DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         cursor.execute('''
@@ -86,50 +88,48 @@ class TestSpeakerCount(unittest.IsolatedAsyncioTestCase):
         self.real_conn.close()
         self.patcher.stop()
 
-    async def test_speakers_reduce_lottery_pool(self):
-        # 5 Total Places
-        # 3 Speakers in Group (mocked)
-        # 0 Guests
-        # Expectation: 5 - 3 = 2 spots for lottery.
+    async def test_lottery_randomness(self):
+        # We will create two separate events with the exact same 10 users registering.
+        # We expect the 'ACCEPTED' users to be different in random draws.
+        # Since it's random, there's a small chance they are identical, but with 2 spots out of 100 users,
+        # or 5 out of 100, the chance is miniscule. Let's use a large pool (50 users) and 10 spots.
         
-        cursor = self.real_conn.cursor()
-        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'OPEN', 5, 'group_speakers')")
-        event_id = cursor.lastrowid
-        
-        # 5 Registered Users (Candidates)
-        for i in range(5):
-            cursor.execute(
-                "INSERT INTO registrations (event_id, user_id, status) VALUES (?, ?, ?)",
-                (event_id, i+10, 'REGISTERED')
-            )
-        self.real_conn.commit()
-        
+        # We need to mock application.bot to avoid exceptions during send_message
         with patch('bot.application') as mock_app:
             mock_app.bot.send_message = AsyncMock()
+            mock_app.bot.get_me = AsyncMock()
+            mock_app.bot.get_chat_member_count = AsyncMock(return_value=1) # Just the bot
             
-            # Mock get_chat_member_count
-            # We need to mock calls made inside close_registration_job.
-            # close_registration_job uses `application.bot` if available or we might need to patch where it gets the bot.
-            # The current implementation of `close_registration_job` uses `application.bot`.
-            mock_app.bot.get_chat_member_count = AsyncMock(return_value=3) 
+            # Run simulation 5 times to surely capture different results
+            all_winners_sets = []
             
-            # Since `close_registration_job` might not use `application.bot` to get the count yet (we haven't implemented it),
-            # this test is predicting the implementation.
-            # However, to fail first, I'll run it.
+            for sim in range(5):
+                cursor = self.real_conn.cursor()
+                cursor.execute(
+                    "INSERT INTO events (chat_id, status, total_places) VALUES (123, 'OPEN', 10)"
+                )
+                event_id = cursor.lastrowid
+                
+                # Add 50 users
+                for i in range(50):
+                    cursor.execute(
+                        "INSERT INTO registrations (event_id, user_id, status) VALUES (?, ?, ?)",
+                        (event_id, 1000 + i, 'REGISTERED')
+                    )
+                self.real_conn.commit()
+                
+                await close_registration_job(event_id, 123)
+                
+                cursor.execute(
+                    "SELECT user_id FROM registrations WHERE event_id = ? AND status = 'ACCEPTED'",
+                    (event_id,)
+                )
+                winners = set(row['user_id'] for row in cursor.fetchall())
+                all_winners_sets.append(winners)
             
-            await close_registration_job(event_id, 123)
-            
-            # Check results
-            cursor.execute("SELECT COUNT(*) as cnt FROM registrations WHERE status = 'ACCEPTED'")
-            accepted_count = cursor.fetchone()['cnt']
-            
-            # Without the fix, it ignores speakers, so 5 spots total -> 5 winners (since 5 registered)
-            # With the fix, it should be 2 winners.
-            
-            # This assertion validates if the logic is present.
-            # Currently it should fail (expecting 5, or maybe fewer if I asserted 2).
-            # I will assert 2 to confirm failure.
-            self.assertEqual(accepted_count, 2, f"Expected 2 winners, got {accepted_count}")
+            # Check that not all sets of winners are exactly identical
+            unique_sets_count = len(set(frozenset(s) for s in all_winners_sets))
+            self.assertGreater(unique_sets_count, 1, "The lottery did not produce any random variations in 5 draws.")
 
 if __name__ == '__main__':
     unittest.main()

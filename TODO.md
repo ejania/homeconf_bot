@@ -13,12 +13,19 @@
     - Add a new `/open` command (no args) that transitions the event from "Pre-Open" to "Open", starting the timer and allowing public `/register`.
 - [x] **Guest Spot Deduction**: When a speaker invites a guest, the number of *general* spots available for the lottery must decrease.
 - [x] **Hardcode Admin IDs**: Moved to environment variable `ADMIN_IDS`.
+- [x] **Guest Username Validation**: When a speaker invites a guest, check that the guest's username is not already a speaker or another speaker's guest.
+- [x] **Status Visibility**: The `/list` command clearly distinguishes between VIP/Guest and General spots.
+- [x] **Reset Command**: Initial implementation of the reset command.
+- [x] **Closing Time Logic Validation**: Verified `apscheduler` handling.
+- [x] **Cleanup**: All tests passing.
 
 ## Pending Tasks
-- [x] **Status Visibility**: The `/list` command should clearly distinguish between **VIP/Guest spots** (Taken by speakers + guests) and **General spots** (Lottery winners + Open).
-- [x] **Reset Command**: Add an admin-only command (e.g., `/reset`) to clear all registrations and the waitlist for the current event, allowing for a fresh start or a re-run.
-- [x] **Closing Time Logic Validation**: Double-check that `apscheduler` handles the `hours` based duration correctly (especially across container restarts).
-- [x] **Cleanup**: All tests passing. Consolidated test suite verified via `unittest discover`.
+- [x] **Lottery Randomness Test**: Add a test that checks that the lottery is random (two different draws should give different results).
+- [x] **State-Change Logging**: Log all state-changing events (new user registration, opening registration, invites, etc.). Logs should be persistent and not deleted during reset.
+- [x] **Improved Reset Logic**: The `/reset` command should delete the current event state entirely to allow for a fresh `/create` with new parameters, rather than just resetting the status.
+- [x] **Unregister Confirmation**: When a user unregisters after the lottery has ended, if there are no free spots, ask for additional confirmation since they won't be able to re-register easily.
+- [x] **Admin Dashboard (Logs)**: Create a simple web-based admin page to watch logs from the latest registration in real time.
+- [x] **Admin Dashboard (Status)**: Add registration status, user lists, and waitlist visibility to the admin page.
 
 ## Notes for Next Session
 - **Current State**: The bot is deployed on `104.248.28.207`. The current active flow uses `/create` -> `/open` -> `/close`.

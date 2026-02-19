@@ -9,3 +9,15 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+
+  web:
+    build: .
+    container_name: homeconf_web
+    restart: always
+    command: python web.py
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_PATH=/app/data/bot_data.db
+    volumes:
+      - ./data:/app/data

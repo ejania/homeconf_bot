@@ -77,6 +77,19 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         ''')
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS action_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (event_id) REFERENCES events (id)
+            )
+        """)
+
         self.real_conn.commit()
 
     def tearDown(self):
@@ -132,12 +145,19 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         )
         self.real_conn.commit()
 
-        # Mock Update and Context for unregister
+        # Mock Update and Context for callback_handler instead of unregister
         update = MagicMock()
         update.effective_chat.type = "private"
         update.effective_user.id = 111
         update.effective_user.username = "user_111"
-        update.message.reply_text = AsyncMock()
+        
+        # We need to simulate the callback
+        cursor.execute("SELECT id FROM registrations WHERE user_id = 111")
+        reg_id = cursor.fetchone()['id']
+        update.callback_query = MagicMock()
+        update.callback_query.data = f"uyes_{reg_id}"
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.edit_message_text = AsyncMock()
         
         context = MagicMock()
         context.bot.send_message = AsyncMock()
@@ -151,7 +171,8 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
             with patch('bot.application') as mock_app:
                 mock_app.bot.send_message = AsyncMock()
                 
-                await unregister(update, context)
+                from bot import callback_handler
+                await callback_handler(update, context)
 
                 # Verify accepted user is unregistered
                 cursor.execute("SELECT status FROM registrations WHERE user_id = 111")

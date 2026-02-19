@@ -68,6 +68,19 @@ class TestGuestDeduction(unittest.IsolatedAsyncioTestCase):
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         ''')
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS action_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (event_id) REFERENCES events (id)
+            )
+        """)
+
         self.real_conn.commit()
 
     def tearDown(self):

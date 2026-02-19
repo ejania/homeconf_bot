@@ -38,6 +38,19 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
             expires_at DATETIME, guest_of_user_id INTEGER)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS speakers (
             id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, username TEXT)''')
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS action_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (event_id) REFERENCES events (id)
+            )
+        """)
+
         self.real_conn.commit()
         
         # Common Mocks
