@@ -111,6 +111,31 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     await update.message.reply_text(messages.EVENT_CREATED)
+    
+    # Run userbot script to import speakers
+    # We do this asynchronously so we don't block the bot
+    await update.message.reply_text("Fetching speakers from group... This might take a few seconds.")
+    try:
+        import asyncio
+        import subprocess
+        # Execute it via CLI because Telethon runs its own asyncio loop 
+        # which can conflict with the main bot application loop if run in the same process
+        process = await asyncio.create_subprocess_exec(
+            'python', 'import_speakers.py', str(actual_group_id),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            logging.info(f"Imported speakers: {stdout.decode()}")
+            await update.message.reply_text(f"✅ Speakers automatically imported!")
+        else:
+            logging.error(f"Error importing speakers: {stderr.decode()}")
+            await update.message.reply_text("⚠️ There was an issue importing speakers. Are you sure you logged in to the userbot via SSH?")
+    except Exception as e:
+        logging.error(f"Exception running import_speakers.py: {e}")
+        await update.message.reply_text("⚠️ Could not run the speaker import script.")
 
 async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
