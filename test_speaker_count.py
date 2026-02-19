@@ -104,18 +104,15 @@ class TestSpeakerCount(unittest.IsolatedAsyncioTestCase):
             )
         self.real_conn.commit()
         
+        # Insert 3 Speakers into DB
+        for i in range(3):
+            cursor.execute("INSERT INTO speakers (event_id, username) VALUES (?, ?)", (event_id, f"speaker_{i}"))
+        self.real_conn.commit()
+            
         with patch('bot.application') as mock_app:
             mock_app.bot.send_message = AsyncMock()
             
-            # Mock get_chat_member_count
-            # We need to mock calls made inside close_registration_job.
-            # close_registration_job uses `application.bot` if available or we might need to patch where it gets the bot.
-            # The current implementation of `close_registration_job` uses `application.bot`.
-            mock_app.bot.get_chat_member_count = AsyncMock(return_value=3) 
-            
-            # Since `close_registration_job` might not use `application.bot` to get the count yet (we haven't implemented it),
-            # this test is predicting the implementation.
-            # However, to fail first, I'll run it.
+            # We don't need to mock get_chat_member_count anymore as we rely on DB
             
             await close_registration_job(event_id, 123)
             

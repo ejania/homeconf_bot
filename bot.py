@@ -254,21 +254,8 @@ async def close_registration_job(event_id, chat_id):
     accepted_count = cursor.fetchone()['count']
     
     # Count speakers
+    # We now rely exclusively on the speakers table which is auto-populated/manual
     speakers_count = 0
-    if event['speakers_group_id']:
-        try:
-            group_count = await application.bot.get_chat_member_count(event['speakers_group_id'])
-            # Only subtract the bot if it is actually in the group
-            try:
-                bot_user = await application.bot.get_me()
-                member = await application.bot.get_chat_member(event['speakers_group_id'], bot_user.id)
-                if member.status not in ["left", "kicked"]:
-                    group_count -= 1
-            except Exception:
-                pass 
-            speakers_count += max(0, group_count)
-        except Exception as e:
-            logging.error(f"Failed to count speakers in group {event['speakers_group_id']}: {e}")
 
     # Add manual speakers
     cursor.execute("SELECT COUNT(*) as count FROM speakers WHERE event_id = ?", (event_id,))
