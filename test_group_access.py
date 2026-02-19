@@ -101,10 +101,18 @@ class TestGroupAccess(unittest.IsolatedAsyncioTestCase):
             chat_mock.title = "Valid Group"
             context.bot.get_chat = AsyncMock(return_value=chat_mock)
             
-            await create_event(update, context)
+            # Mock subprocess for import_speakers.py
+            with patch('asyncio.create_subprocess_exec', new_callable=AsyncMock) as mock_exec:
+                mock_proc = MagicMock()
+                mock_proc.communicate = AsyncMock(return_value=(b'Imported 10 speakers', b''))
+                mock_proc.returncode = 0
+                mock_exec.return_value = mock_proc
+                
+                await create_event(update, context)
             
-            # Verify success message
-            update.message.reply_text.assert_called_with(messages.EVENT_CREATED)
+            # Verify success message was sent at some point
+            # Since multiple messages are sent, use assert_any_call or check call_args_list
+            update.message.reply_text.assert_any_call(messages.EVENT_CREATED)
             
             # Verify event created
             cursor = self.real_conn.cursor()

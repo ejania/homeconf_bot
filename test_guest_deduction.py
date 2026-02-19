@@ -111,10 +111,12 @@ class TestGuestDeduction(unittest.IsolatedAsyncioTestCase):
             )
         self.real_conn.commit()
         
+        # Insert 1 Speaker into DB
+        cursor.execute("INSERT INTO speakers (event_id, username) VALUES (?, ?)", (event_id, "speaker_1"))
+        self.real_conn.commit()
+
         with patch('bot.application') as mock_app:
             mock_app.bot.send_message = AsyncMock()
-            # Mock 1 speaker in group
-            mock_app.bot.get_chat_member_count = AsyncMock(return_value=1)
             
             with patch('bot.invite_next'): # Prevent external calls
                 await close_registration_job(event_id, 123)
