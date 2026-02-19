@@ -576,16 +576,20 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await update.message.reply_text(f"@{guest_username} has status {existing_reg['status']}.")
     else:
         # Create new registration for guest
-        # We don't have user_id yet, so we insert username and status ACCEPTED
         cursor.execute(
             "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?)",
             (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, datetime.now())
         )
-        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Guest: {guest_username}')
         await update.message.reply_text(messages.GUEST_INVITED_NEW.format(username=guest_username))
-
+ 
     conn.commit()
     conn.close()
+    
+    # Log after commit to avoid DB lock
+    if existing_reg:
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Upgraded Guest: {guest_username}')
+    else:
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Guest: {guest_username}')
 
 async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private(update, context):
