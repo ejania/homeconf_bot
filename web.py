@@ -130,16 +130,16 @@ TEMPLATE = """
                 </div>
                 
                 <div class="col" style="flex: 2;">
-                    <h2>Real-time Action Logs (Latest 150)</h2>
+                    <h2>Real-time Action Logs</h2>
                     <div class="table-wrap log-wrap">
                         <table>
                             <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                             {% for log in logs %}
                             <tr>
-                                <td style="white-space: nowrap;">{{ log.timestamp }}</td>
-                                <td>{{ log.username or 'System' }} {{ '(' ~ log.user_id ~ ')' if log.user_id else '' }}</td>
-                                <td><b>{{ log.action }}</b></td>
-                                <td>{{ log.details }}</td>
+                                <td style="white-space: nowrap;">{{ log['timestamp'] }}</td>
+                                <td>{{ log['username'] or 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
+                                <td><b>{{ log['action'] }}</b></td>
+                                <td>{{ log['details'] }}</td>
                             </tr>
                             {% endfor %}
                         </table>
@@ -187,7 +187,7 @@ def dashboard():
         cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status IN ('WAITLIST', 'INVITED') AND guest_of_user_id IS NULL ORDER BY priority ASC", (event['id'],))
         waitlist = cursor.fetchall()
         
-        cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC LIMIT 150", (event['id'],))
+        cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC", (event['id'],))
         logs = cursor.fetchall()
         
     conn.close()

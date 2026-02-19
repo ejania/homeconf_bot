@@ -3,6 +3,7 @@ import sqlite3
 from unittest.mock import patch, MagicMock, AsyncMock
 from models import init_db
 from bot import open_event_command, create_event, reset_event, invite_guest, unregister
+import bot
 
 TEST_DB_PATH = ":memory:"
 
@@ -138,11 +139,20 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
     async def test_invite_guest_logs(self):
         # Setup: Create event and speaker
         cursor = self.real_conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, FOREIGN KEY (event_id) REFERENCES events (id))''') # Ensure table exists
+        # Clean up events first to ensure fresh start
+        cursor.execute("DELETE FROM events")
         cursor.execute("INSERT INTO events (status, total_places, speakers_group_id) VALUES ('PRE_OPEN', 10, 'group')")
         event_id = cursor.lastrowid
-        cursor.execute("INSERT INTO speakers (event_id, username) VALUES (?, ?)", (event_id, "speaker"))
         self.real_conn.commit()
+
+        # Mock speaker check
+        async def mock_get_chat_member(chat_id, user_id):
+            member = MagicMock()
+            if user_id == 888:
+                member.status = 'member'
+            else:
+                member.status = 'left'
+            return member
 
         update = MagicMock()
         update.effective_user.id = 888
@@ -152,19 +162,89 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
 
         context = MagicMock()
         context.args = ["guest_user"]
-        context.bot.get_chat_member = AsyncMock() 
+        context.bot.get_chat_member = AsyncMock(side_effect=mock_get_chat_member)
 
-        # Ensure ensure_private returns True (it's called in invite_guest)
-        # but mock only works if we patch it or pass context
-        # Actually invite_guest checks update.effective_chat.type which we set to 'private'
-        
-        # Test invite_guest
+        # 1. New Guest Invite
         await invite_guest(update, context)
         
-        cursor.execute("SELECT * FROM action_logs WHERE action = 'INVITE_GUEST'")
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'INVITE_GUEST' ORDER BY id DESC")
         logs = cursor.fetchall()
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]['details'], "Guest: guest_user")
+
+        # Clear the first invitation so the speaker can invite again
+        cursor.execute("DELETE FROM registrations WHERE username = 'guest_user'")
+        self.real_conn.commit()
+
+        # 2. Upgrade Guest (from REGISTERED to ACCEPTED)
+        # Create a registered user first
+        cursor.execute("INSERT INTO registrations (event_id, username, status, user_id) VALUES (?, ?, 'REGISTERED', ?)", (event_id, 'registered_user', 999))
+        self.real_conn.commit()
+        
+        context.args = ["registered_user"]
+        await invite_guest(update, context)
+        
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'INVITE_GUEST' ORDER BY id DESC LIMIT 1")
+        logs = cursor.fetchall()
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]['details'], "Upgraded Guest: registered_user")
+
+        # 3. Log for Already Accepted Guest (Verbose)
+        # The previous step accepted 'registered_user'. Let's try inviting them again.
+        # It should now create an INVITE_FAIL log.
+        await invite_guest(update, context)
+        
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'INVITE_FAIL' ORDER BY id DESC LIMIT 1")
+        logs = cursor.fetchall()
+        self.assertEqual(len(logs), 1)
+        self.assertIn("Already invited a guest", logs[0]['details'])
+
+    async def test_verbose_failures(self):
+        # Setup
+        cursor = self.real_conn.cursor()
+        cursor.execute("DELETE FROM events") # Ensure clean state
+        cursor.execute("INSERT INTO events (status, total_places, speakers_group_id) VALUES ('PRE_OPEN', 10, 'group')")
+        event_id = cursor.lastrowid
+        cursor.execute("DELETE FROM speakers")
+        cursor.execute("INSERT INTO speakers (event_id, username) VALUES (?, ?)", (event_id, "speaker_manual"))
+        self.real_conn.commit()
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.effective_user.username = "user123"
+        update.effective_chat.type = "private"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.bot.get_chat_member = AsyncMock()
+        
+        # 1. Register Fail: Event PRE_OPEN
+        await bot.register(update, context)
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'REGISTER_FAIL' AND details = 'Event is PRE_OPEN'")
+        self.assertEqual(len(cursor.fetchall()), 1)
+
+        # 2. Register Fail: Manual Speaker
+        update.effective_user.username = "speaker_manual"
+        await bot.register(update, context)
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'REGISTER_FAIL' AND details = 'User is in manual speakers list'")
+        self.assertEqual(len(cursor.fetchall()), 1)
+
+        # 3. Invite Fail: User not speaker
+        update.effective_user.username = "user123"
+        update.effective_user.id = 123
+        # Mock not being a speaker
+        member_mock = MagicMock()
+        member_mock.status = "left"
+        context.bot.get_chat_member.return_value = member_mock
+        
+        await bot.invite_guest(update, context)
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'INVITE_FAIL' AND details = 'User is not a speaker'")
+        self.assertEqual(len(cursor.fetchall()), 1)
+        
+        # 4. Unregister Fail: No active registration
+        await bot.unregister(update, context)
+        cursor.execute("SELECT * FROM action_logs WHERE action = 'UNREGISTER_FAIL' AND details = 'No active registration'")
+        self.assertEqual(len(cursor.fetchall()), 1)
 
     async def test_unregister_logs(self):
          # Setup: Create event and registration

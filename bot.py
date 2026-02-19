@@ -379,6 +379,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
             if member.status in ["member", "administrator", "creator"]:
                 await update.message.reply_text(messages.ALREADY_SPEAKER)
+                log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_FAIL', 'User is in speakers group')
                 conn.close()
                 return
         except Exception as e:
@@ -392,6 +393,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if cursor.fetchone():
             await update.message.reply_text(messages.ALREADY_SPEAKER)
+            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_FAIL', 'User is in manual speakers list')
             conn.close()
             return
 
@@ -421,13 +423,16 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if existing_reg:
         if existing_reg['guest_of_user_id']:
              await update.message.reply_text(messages.ALREADY_INVITED_HAS_PLACE)
+             log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_FAIL', 'Already has guest spot')
         else:
              await update.message.reply_text(messages.ALREADY_REGISTERED)
+             log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_FAIL', 'Already registered')
         conn.close()
         return
 
     if event['status'] == 'PRE_OPEN':
         await update.message.reply_text(messages.NO_OPEN_REGISTRATION)
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_FAIL', 'Event is PRE_OPEN')
         conn.close()
         return
 
@@ -510,6 +515,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     if not is_speaker:
         await update.message.reply_text(messages.ONLY_SPEAKERS_INVITE)
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', 'User is not a speaker')
         conn.close()
         return
 
@@ -520,6 +526,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if cursor.fetchone():
         await update.message.reply_text(messages.ALREADY_INVITED_GUEST)
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', 'Already invited a guest')
         conn.close()
         return
 
@@ -533,6 +540,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if speaker tries to invite themselves
     if update.effective_user.username and guest_username.lower() == update.effective_user.username.lower():
         await update.message.reply_text(messages.ALREADY_SPEAKER)
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', 'Tried to invite self')
         conn.close()
         return
 
@@ -543,6 +551,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if cursor.fetchone():
         await update.message.reply_text(messages.GUEST_IS_SPEAKER.format(username=guest_username))
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', f'Guest {guest_username} is a speaker')
         conn.close()
         return
 
@@ -553,6 +562,8 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     existing_reg = cursor.fetchone()
     
+    log_details = None
+
     if existing_reg:
         # If they are already REGISTERED (lottery pool) or WAITLIST, upgrade them
         if existing_reg['status'] in ['REGISTERED', 'WAITLIST']:
@@ -560,7 +571,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE registrations SET status = 'ACCEPTED', guest_of_user_id = ? WHERE id = ?",
                 (update.effective_user.id, existing_reg['id'])
             )
-            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Upgraded Guest: {guest_username}')
+            log_details = f'Upgraded Guest: {guest_username}'
             await update.message.reply_text(messages.GUEST_UPGRADED.format(username=guest_username))
             try:
                 if existing_reg['user_id']:
@@ -570,8 +581,10 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
              # Already accepted (maybe via lottery or another invite?)
              if existing_reg['guest_of_user_id']:
                  await update.message.reply_text(messages.GUEST_ALREADY_GUEST.format(username=guest_username))
+                 log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', f'Guest {guest_username} is already invited by someone else')
              else:
                  await update.message.reply_text(messages.GUEST_ALREADY_HAS_SPOT.format(username=guest_username))
+                 log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', f'Guest {guest_username} already has a spot')
         else:
              await update.message.reply_text(f"@{guest_username} has status {existing_reg['status']}.")
     else:
@@ -580,16 +593,15 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?)",
             (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, datetime.now())
         )
+        log_details = f'Guest: {guest_username}'
         await update.message.reply_text(messages.GUEST_INVITED_NEW.format(username=guest_username))
  
     conn.commit()
     conn.close()
     
     # Log after commit to avoid DB lock
-    if existing_reg:
-        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Upgraded Guest: {guest_username}')
-    else:
-        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', f'Guest: {guest_username}')
+    if log_details:
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_GUEST', log_details)
 
 async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private(update, context):
@@ -621,6 +633,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if is_speaker:
             await update.message.reply_text(messages.SPEAKER_UNREGISTER_ERROR)
+            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'UNREGISTER_FAIL', 'Speaker cannot unregister')
             conn.close()
             return
 
@@ -632,6 +645,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not reg:
         await update.message.reply_text(messages.NO_ACTIVE_REGISTRATION)
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'UNREGISTER_FAIL', 'No active registration')
         conn.close()
         return
 

@@ -20,7 +20,7 @@
 - [x] **Cleanup**: All tests passing.
 
 ## Pending Tasks
-- [ ] **Logging Fixes**: Logging is still not working! (User reported missing logs for guest invites). Needs investigation.
+- [x] **Logging Fixes**: Logging is still not working! (User reported missing logs for guest invites). Needs investigation.
 - [x] **Lottery Randomness Test**: Add a test that checks that the lottery is random (two different draws should give different results).
 - [x] **State-Change Logging**: Log all state-changing events (new user registration, opening registration, invites, etc.). Logs should be persistent and not deleted during reset.
 - [x] **Improved Reset Logic**: The `/reset` command should delete the current event state entirely to allow for a fresh `/create` with new parameters, rather than just resetting the status.
