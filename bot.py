@@ -12,6 +12,14 @@ import messages
 
 load_dotenv()
 
+def _get_group_id(gid):
+    if not gid:
+        return None
+    try:
+        return int(gid)
+    except ValueError:
+        return gid
+
 # Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -81,6 +89,10 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         speakers_group_id = context.args[0]
+        try:
+            speakers_group_id = int(speakers_group_id)
+        except ValueError:
+            pass
     except IndexError:
         await update.message.reply_text(messages.USAGE_CREATE)
         conn.close()
@@ -299,7 +311,7 @@ async def close_registration_job(event_id, chat_id):
         # Check group membership
         if not is_speaker and event['speakers_group_id']:
              try:
-                 member = await application.bot.get_chat_member(event['speakers_group_id'], reg['user_id'])
+                 member = await application.bot.get_chat_member(_get_group_id(event['speakers_group_id']), reg['user_id'])
                  if member.status in ["member", "administrator", "creator"]:
                      is_speaker = True
              except Exception:
@@ -383,7 +395,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if user is in the speakers group
     if event['speakers_group_id']:
         try:
-            member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+            member = await context.bot.get_chat_member(_get_group_id(event['speakers_group_id']), update.effective_user.id)
             if member.status in ["member", "administrator", "creator"]:
                 await update.message.reply_text(messages.ALREADY_SPEAKER)
                 log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_FAIL', 'User is in speakers group')
@@ -506,7 +518,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_speaker = False
     if event['speakers_group_id']:
         try:
-            member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+            member = await context.bot.get_chat_member(_get_group_id(event['speakers_group_id']), update.effective_user.id)
             if member.status in ["member", "administrator", "creator"]:
                 is_speaker = True
         except Exception as e:
@@ -628,7 +640,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_speaker = False
     if event['speakers_group_id']:
         try:
-            member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+            member = await context.bot.get_chat_member(_get_group_id(event['speakers_group_id']), update.effective_user.id)
             if member.status in ["member", "administrator", "creator"]:
                 is_speaker = True
         except Exception as e:
@@ -808,7 +820,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if event and event['status'] != 'CANCELLED':
         if event['speakers_group_id']:
             try:
-                member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+                member = await context.bot.get_chat_member(_get_group_id(event['speakers_group_id']), update.effective_user.id)
                 if member.status in ["member", "administrator", "creator"]:
                     is_speaker = True
             except Exception as e:
@@ -874,11 +886,11 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     speakers_count = 0
     if event['speakers_group_id']:
         try:
-            group_count = await context.bot.get_chat_member_count(event['speakers_group_id'])
+            group_count = await context.bot.get_chat_member_count(_get_group_id(event['speakers_group_id']))
             # Only subtract the bot if it is actually in the group
             try:
                 bot_user = await context.bot.get_me()
-                member = await context.bot.get_chat_member(event['speakers_group_id'], bot_user.id)
+                member = await context.bot.get_chat_member(_get_group_id(event['speakers_group_id']), bot_user.id)
                 if member.status not in ["left", "kicked"]:
                     group_count -= 1
             except Exception:
