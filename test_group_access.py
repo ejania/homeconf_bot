@@ -68,7 +68,7 @@ class TestGroupAccess(unittest.IsolatedAsyncioTestCase):
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
-        context.args = ["2", "10", "invalid_group"]
+        context.args = ["invalid_group"]
         
         # Mock admin check
         with patch('bot.is_admin', return_value=True):
@@ -92,7 +92,7 @@ class TestGroupAccess(unittest.IsolatedAsyncioTestCase):
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
-        context.args = ["2", "10", "valid_group"]
+        context.args = ["valid_group"]
         
         with patch('bot.is_admin', return_value=True):
             # Mock success

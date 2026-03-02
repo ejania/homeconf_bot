@@ -80,12 +80,8 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        hours = int(context.args[0])
-        places = int(context.args[1])
-        speakers_group_id = context.args[2]
-        # Optional 4th arg for timeout, default 24
-        timeout_hours = int(context.args[3]) if len(context.args) > 3 else 24
-    except (IndexError, ValueError):
+        speakers_group_id = context.args[0]
+    except IndexError:
         await update.message.reply_text(messages.USAGE_CREATE)
         conn.close()
         return
@@ -102,12 +98,12 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     cursor.execute(
-        "INSERT INTO events (chat_id, status, total_places, speakers_group_id, waitlist_timeout_hours, registration_duration_hours) VALUES (?, ?, ?, ?, ?, ?)",
-        (update.effective_chat.id, 'PRE_OPEN', places, str(actual_group_id), timeout_hours, hours)
+        "INSERT INTO events (chat_id, status, speakers_group_id) VALUES (?, ?, ?)",
+        (update.effective_chat.id, 'PRE_OPEN', str(actual_group_id))
     )
     conn.commit()
     event_id = cursor.lastrowid
-    log_action(event_id, update.effective_user.id, update.effective_user.username, 'CREATE_EVENT', f'places={places}, hours={hours}')
+    log_action(event_id, update.effective_user.id, update.effective_user.username, 'CREATE_EVENT', f'group={actual_group_id}')
     conn.close()
 
     await update.message.reply_text(messages.EVENT_CREATED)
@@ -155,12 +151,23 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.close()
         return
 
-    duration_hours = event['registration_duration_hours']
-    end_time = datetime.now() + timedelta(hours=duration_hours)
+    try:
+        hours = int(context.args[0])
+        places = int(context.args[1])
+        timeout_hours = int(context.args[2]) if len(context.args) > 2 else 24
+    except (IndexError, ValueError):
+        await update.message.reply_text(messages.USAGE_OPEN)
+        conn.close()
+        return
+
+    end_time = datetime.now() + timedelta(hours=hours)
     
-    cursor.execute("UPDATE events SET status = 'OPEN', end_time = ? WHERE id = ?", (end_time, event['id']))
+    cursor.execute(
+        "UPDATE events SET status = 'OPEN', end_time = ?, total_places = ?, waitlist_timeout_hours = ?, registration_duration_hours = ? WHERE id = ?", 
+        (end_time, places, timeout_hours, hours, event['id'])
+    )
     conn.commit()
-    log_action(event['id'], update.effective_user.id, update.effective_user.username, 'OPEN_EVENT', f'end_time={end_time}')
+    log_action(event['id'], update.effective_user.id, update.effective_user.username, 'OPEN_EVENT', f'places={places}, end_time={end_time}')
     conn.close()
 
     scheduler.add_job(
@@ -173,7 +180,7 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     await update.message.reply_text(
-        messages.REGISTRATION_OPENED.format(places=event['total_places'], end_time=end_time.strftime('%H:%M:%S')),
+        messages.REGISTRATION_OPENED.format(places=places, end_time=end_time.strftime('%H:%M:%S')),
         parse_mode='Markdown'
     )
 
@@ -920,25 +927,29 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     total_places = event['total_places']
     vip_total = speakers_count + guests_count
-    general_total = max(0, total_places - vip_total)
     
-    status_str = "OPEN" if event['status'] == 'OPEN' else "CLOSED"
     if event['status'] == 'PRE_OPEN':
-        status_str = "PRE_OPEN"
-
-    msg = messages.EVENT_STATUS_HEADER.format(
-        status=status_str, 
-        vip_taken=vip_total,
-        general_taken=general_taken,
-        general_total=general_total
-    )
-    
-    if event['status'] == 'OPEN':
-        msg += messages.EVENT_STATUS_OPEN.format(count=lottery_count)
-    elif event['status'] == 'CLOSED':
-        msg += messages.EVENT_STATUS_CLOSED.format(waitlist=waitlist_count)
-        if invited_count > 0:
-            msg += messages.EVENT_STATUS_PENDING.format(invited=invited_count)
+        msg = messages.EVENT_STATUS_HEADER_PRE_OPEN.format(
+            status="PRE_OPEN",
+            vip_taken=vip_total
+        )
+        msg += messages.EVENT_STATUS_PRE_OPEN
+    else:
+        general_total = max(0, total_places - vip_total) if total_places is not None else 0
+        status_str = "OPEN" if event['status'] == 'OPEN' else "CLOSED"
+        msg = messages.EVENT_STATUS_HEADER.format(
+            status=status_str, 
+            vip_taken=vip_total,
+            general_taken=general_taken,
+            general_total=general_total
+        )
+        
+        if event['status'] == 'OPEN':
+            msg += messages.EVENT_STATUS_OPEN.format(count=lottery_count)
+        elif event['status'] == 'CLOSED':
+            msg += messages.EVENT_STATUS_CLOSED.format(waitlist=waitlist_count)
+            if invited_count > 0:
+                msg += messages.EVENT_STATUS_PENDING.format(invited=invited_count)
 
     await update.message.reply_text(msg, parse_mode='Markdown')
     conn.close()

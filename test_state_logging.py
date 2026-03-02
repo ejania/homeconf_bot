@@ -101,7 +101,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         update.message.reply_text = AsyncMock()
 
         context = MagicMock()
-        context.args = ["1", "10", "@speakers"]
+        context.args = ["@speakers"]
         context.bot.get_chat = AsyncMock()
         context.bot.get_chat.return_value.id = 999
         context.bot.get_chat.return_value.title = "Speakers"
@@ -118,6 +118,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
 
         # 2. Test open_event logs
         # Need to mock scheduler
+        context.args = ["1", "10"]
         with patch('bot.scheduler') as mock_scheduler:
             await open_event_command(update, context)
             

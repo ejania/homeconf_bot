@@ -96,7 +96,7 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
-        context.args = ["2", "10", "group_speakers"] # 2 hours, 10 places
+        context.args = ["group_speakers"]
         
         # Mock admin check
         with patch('bot.is_admin', return_value=True):
@@ -112,8 +112,8 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
         cursor.execute("SELECT * FROM events WHERE status = 'PRE_OPEN'")
         event = cursor.fetchone()
         self.assertIsNotNone(event)
-        self.assertEqual(event['registration_duration_hours'], 2)
-        self.assertEqual(event['total_places'], 10)
+        self.assertIsNone(event['registration_duration_hours'])
+        self.assertIsNone(event['total_places'])
         
         event_id = event['id']
 
@@ -144,6 +144,7 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
         update_open.effective_user.id = 999
         update_open.message.reply_text = AsyncMock()
         context_open = MagicMock()
+        context_open.args = ["2", "10"] # 2 hours, 10 places
         
         with patch('bot.is_admin', return_value=True):
             with patch('bot.scheduler') as mock_scheduler:
@@ -153,6 +154,8 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
                 cursor.execute("SELECT * FROM events WHERE id = ?", (event_id,))
                 event = cursor.fetchone()
                 self.assertEqual(event['status'], 'OPEN')
+                self.assertEqual(event['registration_duration_hours'], 2)
+                self.assertEqual(event['total_places'], 10)
                 self.assertIsNotNone(event['end_time'])
                 
                 # Verify job scheduled
