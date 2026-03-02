@@ -368,7 +368,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
     event = cursor.fetchone()
     
-    if not event:
+    if not event or event['status'] == 'CANCELLED':
         await update.message.reply_text(messages.NO_EVENT_FOUND)
         conn.close()
         return
@@ -484,7 +484,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
     event = cursor.fetchone()
     
-    if not event:
+    if not event or event['status'] == 'CANCELLED':
         await update.message.reply_text(messages.NO_EVENT_FOUND)
         conn.close()
         return
@@ -612,30 +612,34 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
     event = cursor.fetchone()
 
-    # Check if user is a speaker
-    if event:
-        is_speaker = False
-        if event['speakers_group_id']:
-            try:
-                member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
-                if member.status in ["member", "administrator", "creator"]:
-                    is_speaker = True
-            except Exception as e:
-                logging.error(f"Error checking speaker group membership: {e}")
+    if not event or event['status'] == 'CANCELLED':
+        await update.message.reply_text(messages.NO_ACTIVE_REGISTRATION)
+        conn.close()
+        return
 
-        if not is_speaker and update.effective_user.username:
-            cursor.execute(
-                "SELECT id FROM speakers WHERE event_id = ? AND username = ?",
-                (event['id'], update.effective_user.username.lower())
-            )
-            if cursor.fetchone():
+    # Check if user is a speaker
+    is_speaker = False
+    if event['speakers_group_id']:
+        try:
+            member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
+            if member.status in ["member", "administrator", "creator"]:
                 is_speaker = True
-        
-        if is_speaker:
-            await update.message.reply_text(messages.SPEAKER_UNREGISTER_ERROR)
-            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'UNREGISTER_FAIL', 'Speaker cannot unregister')
-            conn.close()
-            return
+        except Exception as e:
+            logging.error(f"Error checking speaker group membership: {e}")
+
+    if not is_speaker and update.effective_user.username:
+        cursor.execute(
+            "SELECT id FROM speakers WHERE event_id = ? AND username = ?",
+            (event['id'], update.effective_user.username.lower())
+        )
+        if cursor.fetchone():
+            is_speaker = True
+    
+    if is_speaker:
+        await update.message.reply_text(messages.SPEAKER_UNREGISTER_ERROR)
+        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'UNREGISTER_FAIL', 'Speaker cannot unregister')
+        conn.close()
+        return
 
     cursor.execute(
         "SELECT * FROM registrations WHERE user_id = ? AND status IN ('ACCEPTED', 'INVITED', 'WAITLIST', 'REGISTERED') ORDER BY id DESC LIMIT 1",
@@ -794,7 +798,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
     event = cursor.fetchone()
     
-    if event:
+    if event and event['status'] != 'CANCELLED':
         if event['speakers_group_id']:
             try:
                 member = await context.bot.get_chat_member(event['speakers_group_id'], update.effective_user.id)
@@ -829,7 +833,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_speaker:
         display_status = messages.STATUS_SPEAKER
         msg = messages.STATUS_MSG.format(status=display_status)
-    elif not reg:
+    elif not reg or reg['event_status'] == 'CANCELLED':
         await update.message.reply_text(messages.NOT_REGISTERED)
         conn.close()
         return
@@ -851,6 +855,11 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not event:
         await update.message.reply_text(messages.NO_EVENTS_FOUND)
+        conn.close()
+        return
+
+    if event['status'] == 'CANCELLED':
+        await update.message.reply_text(messages.EVENT_NOT_STARTED)
         conn.close()
         return
 

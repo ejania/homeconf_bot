@@ -43,8 +43,28 @@ TEMPLATE = """
     <div class="container">
         <h1>Admin Dashboard</h1>
         <h2>Current Event Status</h2>
-        {% if not event %}
+        {% if not event or event.status == 'CANCELLED' %}
             <p>No active event found.</p>
+            {% if logs %}
+                <div class="row">
+                    <div class="col" style="flex: 2;">
+                        <h2>Real-time Action Logs</h2>
+                        <div class="table-wrap log-wrap">
+                            <table>
+                                <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
+                                {% for log in logs %}
+                                <tr>
+                                    <td style="white-space: nowrap;">{{ log['timestamp'] }}</td>
+                                    <td>{{ log['username'] or 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
+                                    <td><b>{{ log['action'] }}</b></td>
+                                    <td>{{ log['details'] }}</td>
+                                </tr>
+                                {% endfor %}
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
         {% else %}
             <p style="font-size: 1.1em;">
                 <strong>Event ID:</strong> {{ event.id }} &nbsp;|&nbsp; 
@@ -172,20 +192,21 @@ def dashboard():
     logs = []
     
     if event:
-        cursor.execute("SELECT * FROM speakers WHERE event_id = ?", (event['id'],))
-        speakers = cursor.fetchall()
-        
-        cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id IS NOT NULL AND status IN ('ACCEPTED', 'INVITED', 'UNREGISTERED') ORDER BY id DESC", (event['id'],))
-        invitees = cursor.fetchall()
-        
-        cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'REGISTERED' ORDER BY signup_time ASC", (event['id'],))
-        registered = cursor.fetchall()
+        if event['status'] != 'CANCELLED':
+            cursor.execute("SELECT * FROM speakers WHERE event_id = ?", (event['id'],))
+            speakers = cursor.fetchall()
+            
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id IS NOT NULL AND status IN ('ACCEPTED', 'INVITED', 'UNREGISTERED') ORDER BY id DESC", (event['id'],))
+            invitees = cursor.fetchall()
+            
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'REGISTERED' ORDER BY signup_time ASC", (event['id'],))
+            registered = cursor.fetchall()
 
-        cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'ACCEPTED' AND guest_of_user_id IS NULL ORDER BY signup_time ASC", (event['id'],))
-        admitted = cursor.fetchall()
-        
-        cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status IN ('WAITLIST', 'INVITED') AND guest_of_user_id IS NULL ORDER BY priority ASC", (event['id'],))
-        waitlist = cursor.fetchall()
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'ACCEPTED' AND guest_of_user_id IS NULL ORDER BY signup_time ASC", (event['id'],))
+            admitted = cursor.fetchall()
+            
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status IN ('WAITLIST', 'INVITED') AND guest_of_user_id IS NULL ORDER BY priority ASC", (event['id'],))
+            waitlist = cursor.fetchall()
         
         cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC", (event['id'],))
         logs = cursor.fetchall()

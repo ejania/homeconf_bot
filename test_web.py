@@ -57,5 +57,27 @@ class TestWebDashboard(unittest.TestCase):
         # Simple count check - "ACTION_" appears 200 times in the logs
         self.assertEqual(html.count("ACTION_"), 200)
 
+    def test_dashboard_cancelled_hides_participants(self):
+        # Update event to CANCELLED
+        cursor = self.conn.cursor()
+        cursor.execute("UPDATE events SET status = 'CANCELLED' WHERE id = 1")
+        # Add a speaker and registration
+        cursor.execute("INSERT INTO speakers (event_id, username) VALUES (1, 'test_speaker')")
+        cursor.execute("INSERT INTO registrations (event_id, username, status) VALUES (1, 'test_user', 'ACCEPTED')")
+        self.conn.commit()
+        
+        response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        html = response.data.decode()
+        
+        # Should show "No active event found"
+        self.assertIn("No active event found.", html)
+        # Should NOT show the participant tables or names
+        self.assertNotIn("@test_speaker", html)
+        self.assertNotIn("@test_user", html)
+        # Should STILL show logs
+        self.assertIn("Real-time Action Logs", html)
+        self.assertEqual(html.count("ACTION_"), 200)
+
 if __name__ == '__main__':
     unittest.main()
