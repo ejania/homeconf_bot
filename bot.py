@@ -104,10 +104,24 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info(f"Verified speakers group: {chat.title} ({chat.id})")
         actual_group_id = chat.id
     except Exception as e:
-        await update.message.reply_text(messages.ERROR_ACCESS_GROUP)
-        logging.error(f"Failed to access group {speakers_group_id}: {e}")
-        conn.close()
-        return
+        # Fallback: Telegram clients often strip the -100 prefix for supergroups.
+        # Let's try adding it if it's a negative integer not starting with -100.
+        if isinstance(speakers_group_id, int) and speakers_group_id < 0 and not str(speakers_group_id).startswith("-100"):
+            try:
+                speakers_group_id = int(f"-100{abs(speakers_group_id)}")
+                chat = await context.bot.get_chat(speakers_group_id)
+                logging.info(f"Verified speakers group (with -100 prefix): {chat.title} ({chat.id})")
+                actual_group_id = chat.id
+            except Exception as e2:
+                await update.message.reply_text(messages.ERROR_ACCESS_GROUP)
+                logging.error(f"Failed to access group {speakers_group_id}: {e2}")
+                conn.close()
+                return
+        else:
+            await update.message.reply_text(messages.ERROR_ACCESS_GROUP)
+            logging.error(f"Failed to access group {speakers_group_id}: {e}")
+            conn.close()
+            return
 
     cursor.execute(
         "INSERT INTO events (chat_id, status, speakers_group_id) VALUES (?, ?, ?)",
