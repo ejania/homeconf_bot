@@ -131,18 +131,18 @@ class TestList(unittest.IsolatedAsyncioTestCase):
         await list_participants(update, context)
 
         # Verify response
-        # Total speakers = 3 (from group) + 2 (manual) = 5
+        # Total speakers = 2 (manual)
         # Total guests = 1
-        # VIP taken = 5 + 1 = 6
-        # General total = 10 - 6 = 4
+        # VIP taken = 2 + 1 = 3
+        # General total = 10 - 3 = 7
         # General taken = 2
         # Lottery count = 3
         
         expected_msg = messages.EVENT_STATUS_HEADER.format(
             status="OPEN",
-            vip_taken=6,
+            vip_taken=3,
             general_taken=2,
-            general_total=4
+            general_total=7
         )
         expected_msg += messages.EVENT_STATUS_OPEN.format(count=3)
         

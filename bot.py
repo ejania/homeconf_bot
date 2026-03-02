@@ -897,24 +897,9 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Count speakers
-    speakers_count = 0
-    if event['speakers_group_id']:
-        try:
-            group_count = await context.bot.get_chat_member_count(_get_group_id(event['speakers_group_id']))
-            # Only subtract the bot if it is actually in the group
-            try:
-                bot_user = await context.bot.get_me()
-                member = await context.bot.get_chat_member(_get_group_id(event['speakers_group_id']), bot_user.id)
-                if member.status not in ["left", "kicked"]:
-                    group_count -= 1
-            except Exception:
-                pass
-            speakers_count = max(0, group_count)
-        except Exception as e:
-            logging.error(f"Failed to count speakers in group {event['speakers_group_id']}: {e}")
-
+    # We now rely exclusively on the speakers table which is auto-populated/manual
     cursor.execute("SELECT COUNT(*) as count FROM speakers WHERE event_id = ?", (event['id'],))
-    speakers_count += cursor.fetchone()['count']
+    speakers_count = cursor.fetchone()['count']
 
     # Count guests
     cursor.execute(
