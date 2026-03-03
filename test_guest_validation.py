@@ -129,5 +129,59 @@ class TestGuestValidation(unittest.IsolatedAsyncioTestCase):
         
         self.update.message.reply_text.assert_called_with(messages.GUEST_ALREADY_GUEST.format(username="guest_charlie"))
 
+    @patch('bot.ContextTypes.DEFAULT_TYPE')
+    async def test_invite_sanitizes_input(self, mock_context):
+        event_id = await self.create_event()
+        
+        # Test input with brackets and @
+        self.context.args = ["<@guest_dan>"]
+        self.update.effective_user.id = 103
+        self.update.effective_user.username = "speaker_diana"
+        
+        # Mock group check
+        self.context.bot.get_chat_member = AsyncMock()
+        member_mock = MagicMock()
+        member_mock.status = "member"
+        self.context.bot.get_chat_member.return_value = member_mock
+        
+        await invite_guest(self.update, self.context)
+        
+        # Check database
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT username FROM registrations WHERE event_id = ? AND guest_of_user_id = ?", (event_id, 103))
+        reg = cursor.fetchone()
+        conn.close()
+        
+        self.assertIsNotNone(reg)
+        self.assertEqual(reg['username'], "guest_dan")
+
+    @patch('bot.ContextTypes.DEFAULT_TYPE')
+    async def test_invite_sanitizes_brackets_only(self, mock_context):
+        event_id = await self.create_event()
+        
+        # Test input with brackets only
+        self.context.args = ["<guest_eve>"]
+        self.update.effective_user.id = 104
+        self.update.effective_user.username = "speaker_edward"
+        
+        # Mock group check
+        self.context.bot.get_chat_member = AsyncMock()
+        member_mock = MagicMock()
+        member_mock.status = "member"
+        self.context.bot.get_chat_member.return_value = member_mock
+        
+        await invite_guest(self.update, self.context)
+        
+        # Check database
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT username FROM registrations WHERE event_id = ? AND guest_of_user_id = ?", (event_id, 104))
+        reg = cursor.fetchone()
+        conn.close()
+        
+        self.assertIsNotNone(reg)
+        self.assertEqual(reg['username'], "guest_eve")
+
 if __name__ == '__main__':
     unittest.main()

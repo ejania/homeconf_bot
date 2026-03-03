@@ -552,30 +552,37 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    # Check if speaker already invited someone
-    cursor.execute(
-        "SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id = ? AND status != 'UNREGISTERED'",
-        (event['id'], update.effective_user.id)
-    )
-    if cursor.fetchone():
-        await update.message.reply_text(messages.ALREADY_INVITED_GUEST)
-        log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', 'Already invited a guest')
-        conn.close()
-        return
-
     if not context.args:
         await update.message.reply_text(messages.USAGE_INVITE)
         conn.close()
         return
-        
-    guest_username = context.args[0].lstrip('@')
-    
+
+    guest_username = context.args[0].replace('<', '').replace('>', '').lstrip('@')
+
     # Check if speaker tries to invite themselves
     if update.effective_user.username and guest_username.lower() == update.effective_user.username.lower():
         await update.message.reply_text(messages.ALREADY_SPEAKER)
         log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', 'Tried to invite self')
         conn.close()
         return
+
+    # Check if speaker already invited someone
+    cursor.execute(
+        "SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id = ? AND status != 'UNREGISTERED'",
+        (event['id'], update.effective_user.id)
+    )
+    existing_invite = cursor.fetchone()
+    invite_to_delete_id = None
+    old_guest_message = ""
+    if existing_invite:
+        if existing_invite['user_id'] is not None:
+            await update.message.reply_text(messages.ALREADY_INVITED_GUEST)
+            log_action(event['id'], update.effective_user.id, update.effective_user.username, 'INVITE_FAIL', 'Already invited a guest who is registered')
+            conn.close()
+            return
+        elif existing_invite['username'].lower() != guest_username.lower():
+            invite_to_delete_id = existing_invite['id']
+            old_guest_message = messages.GUEST_REPLACED.format(old_username=existing_invite['username']) + "\n\n"
 
     # Check if guest is a speaker (manual list)
     cursor.execute(
@@ -600,12 +607,14 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if existing_reg:
         # If they are already REGISTERED (lottery pool) or WAITLIST, upgrade them
         if existing_reg['status'] in ['REGISTERED', 'WAITLIST']:
+            if invite_to_delete_id:
+                cursor.execute("DELETE FROM registrations WHERE id = ?", (invite_to_delete_id,))
             cursor.execute(
                 "UPDATE registrations SET status = 'ACCEPTED', guest_of_user_id = ? WHERE id = ?",
                 (update.effective_user.id, existing_reg['id'])
             )
             log_details = f'Upgraded Guest: {guest_username}'
-            await update.message.reply_text(messages.GUEST_UPGRADED.format(username=guest_username))
+            await update.message.reply_text(old_guest_message + messages.GUEST_UPGRADED.format(username=guest_username))
             try:
                 if existing_reg['user_id']:
                     await context.bot.send_message(existing_reg['user_id'], messages.GUEST_INVITED_NOTIFY.format(speaker=update.effective_user.first_name))
@@ -621,13 +630,15 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
              await update.message.reply_text(f"@{guest_username} has status {existing_reg['status']}.")
     else:
+        if invite_to_delete_id:
+            cursor.execute("DELETE FROM registrations WHERE id = ?", (invite_to_delete_id,))
         # Create new registration for guest
         cursor.execute(
             "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?)",
             (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, datetime.now())
         )
         log_details = f'Guest: {guest_username}'
-        await update.message.reply_text(messages.GUEST_INVITED_NEW.format(username=guest_username))
+        await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_NEW.format(username=guest_username))
  
     conn.commit()
     conn.close()

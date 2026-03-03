@@ -304,7 +304,37 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'PRE_OPEN', 10, 'group_id')")
         event_id = cursor.lastrowid
         
-        # Speaker already invited someone
+        # Speaker already invited someone and they registered
+        cursor.execute(
+            "INSERT INTO registrations (event_id, user_id, username, status, guest_of_user_id) VALUES (?, ?, ?, ?, ?)",
+            (event_id, 888, 'first_guest', 'ACCEPTED', 999)
+        )
+        self.real_conn.commit()
+
+        update = MagicMock()
+        update.effective_chat.type = "private"
+        update.effective_user.id = 999 # Speaker
+        update.effective_user.username = "speaker_user"
+        update.message.reply_text = AsyncMock()
+        
+        context = MagicMock()
+        context.args = ["second_guest"]
+        
+        # Mock speaker check
+        member = MagicMock()
+        member.status = "member"
+        context.bot.get_chat_member = AsyncMock(return_value=member)
+
+        await invite_guest(update, context)
+        
+        update.message.reply_text.assert_called_with(messages.ALREADY_INVITED_GUEST)
+
+    async def test_invite_guest_replace_pending(self):
+        cursor = self.real_conn.cursor()
+        cursor.execute("INSERT INTO events (chat_id, status, total_places, speakers_group_id) VALUES (123, 'PRE_OPEN', 10, 'group_id')")
+        event_id = cursor.lastrowid
+        
+        # Speaker already invited someone, but they haven't registered yet (user_id is None)
         cursor.execute(
             "INSERT INTO registrations (event_id, username, status, guest_of_user_id) VALUES (?, ?, ?, ?)",
             (event_id, 'first_guest', 'ACCEPTED', 999)
@@ -327,7 +357,15 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
 
         await invite_guest(update, context)
         
-        update.message.reply_text.assert_called_with(messages.ALREADY_INVITED_GUEST)
+        # Verify correct reply is sent (combination of replaced message and new invite message)
+        expected_msg = messages.GUEST_REPLACED.format(old_username='first_guest') + "\n\n" + messages.GUEST_INVITED_NEW.format(username='second_guest')
+        update.message.reply_text.assert_called_with(expected_msg)
+        
+        # Verify db state: first_guest should be gone, second_guest should be there
+        cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id = ?", (event_id, 999))
+        regs = cursor.fetchall()
+        self.assertEqual(len(regs), 1)
+        self.assertEqual(regs[0]['username'], 'second_guest')
 
     async def test_guest_try_register_again(self):
         cursor = self.real_conn.cursor()

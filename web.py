@@ -75,7 +75,7 @@ TEMPLATE = """
             <div class="row">
                 <div class="col" style="flex: 2;">
                     
-                    <h2>VIP: Speakers (Manual) ({{ speakers|length }})</h2>
+                    <h2>Speakers ({{ speakers|length }})</h2>
                     <div class="table-wrap" style="max-height: 200px;">
                         <table>
                             <tr><th>Username</th></tr>
@@ -86,65 +86,61 @@ TEMPLATE = """
                         </table>
                     </div>
 
-                    <h2>VIP: Invitees (Guests) ({{ invitees|length }})</h2>
+                    <h2>Speakers' guests ({{ invitees|length }})</h2>
                     <div class="table-wrap">
                         <table>
-                            <tr><th>Name</th><th>Username</th><th>Status</th><th>Invited By (User ID)</th></tr>
+                            <tr><th>Username</th><th>Status</th><th>Invited By</th></tr>
                             {% for r in invitees %}
                             <tr>
-                                <td>{{ r.first_name or '-' }}</td>
                                 <td>{{ r.username or '-' }}</td>
                                 <td><span class="badge">{{ r.status }}</span></td>
-                                <td>{{ r.guest_of_user_id }}</td>
+                                <td>{{ r.speaker_username or r.guest_of_user_id }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not invitees %}<tr><td colspan="4">No invitees yet</td></tr>{% endif %}
+                            {% if not invitees %}<tr><td colspan="3">No invitees yet</td></tr>{% endif %}
                         </table>
                     </div>
 
                     <h2>Admitted (Lottery Winners) ({{ admitted|length }})</h2>
                     <div class="table-wrap">
                         <table>
-                            <tr><th>Name</th><th>Username</th><th>Time</th></tr>
+                            <tr><th>Username</th><th>Time</th></tr>
                             {% for r in admitted %}
                             <tr>
-                                <td>{{ r.first_name }}</td>
                                 <td>{{ r.username }}</td>
                                 <td>{{ r.signup_time }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not admitted %}<tr><td colspan="3">No admitted users</td></tr>{% endif %}
+                            {% if not admitted %}<tr><td colspan="2">No admitted users</td></tr>{% endif %}
                         </table>
                     </div>
 
                     <h2>Registered (Lottery Pool) ({{ registered|length }})</h2>
                     <div class="table-wrap">
                         <table>
-                            <tr><th>Name</th><th>Username</th><th>Time</th></tr>
+                            <tr><th>Username</th><th>Time</th></tr>
                             {% for r in registered %}
                             <tr>
-                                <td>{{ r.first_name }}</td>
                                 <td>{{ r.username }}</td>
                                 <td>{{ r.signup_time }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not registered %}<tr><td colspan="3">No users in pool</td></tr>{% endif %}
+                            {% if not registered %}<tr><td colspan="2">No users in pool</td></tr>{% endif %}
                         </table>
                     </div>
 
                     <h2>Waitlist ({{ waitlist|length }})</h2>
                     <div class="table-wrap">
                         <table>
-                            <tr><th>Priority</th><th>Name</th><th>Username</th><th>Status</th></tr>
+                            <tr><th>Priority</th><th>Username</th><th>Status</th></tr>
                             {% for r in waitlist %}
                             <tr>
                                 <td>{{ r.priority }}</td>
-                                <td>{{ r.first_name }}</td>
                                 <td>{{ r.username }}</td>
                                 <td><span class="badge">{{ r.status }}</span></td>
                             </tr>
                             {% endfor %}
-                            {% if not waitlist %}<tr><td colspan="4">Waitlist is empty</td></tr>{% endif %}
+                            {% if not waitlist %}<tr><td colspan="3">Waitlist is empty</td></tr>{% endif %}
                         </table>
                     </div>
                 </div>
@@ -196,7 +192,13 @@ def dashboard():
             cursor.execute("SELECT * FROM speakers WHERE event_id = ?", (event['id'],))
             speakers = cursor.fetchall()
             
-            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id IS NOT NULL AND status IN ('ACCEPTED', 'INVITED', 'UNREGISTERED') ORDER BY id DESC", (event['id'],))
+            cursor.execute("""
+                SELECT r.*, 
+                       (SELECT username FROM action_logs WHERE user_id = r.guest_of_user_id AND username IS NOT NULL ORDER BY id DESC LIMIT 1) as speaker_username 
+                FROM registrations r 
+                WHERE r.event_id = ? AND r.guest_of_user_id IS NOT NULL AND r.status IN ('ACCEPTED', 'INVITED', 'UNREGISTERED') 
+                ORDER BY r.id DESC
+            """, (event['id'],))
             invitees = cursor.fetchall()
             
             cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'REGISTERED' ORDER BY signup_time ASC", (event['id'],))
