@@ -27,6 +27,7 @@ TEMPLATE = """
         .col { flex: 1; }
         .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; background: #ddd; }
         .status-open { background: #d4edda; color: #155724; }
+        .status-review { background: #fff3cd; color: #856404; }
         .status-closed { background: #f8d7da; color: #721c24; }
         .status-pre_open { background: #cce5ff; color: #004085; }
         .status-cancelled { background: #e2e3e5; color: #383d41; }

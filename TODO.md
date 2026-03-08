@@ -25,6 +25,7 @@
 - [x] **State-Change Logging**: Log all state-changing events (new user registration, opening registration, invites, etc.). Logs should be persistent and not deleted during reset.
 - [x] **Improved Reset Logic**: The `/reset` command should delete the current event state entirely to allow for a fresh `/create` with new parameters, rather than just resetting the status.
 - [x] **Unregister Confirmation**: When a user unregisters after the lottery has ended, if there are no free spots, ask for additional confirmation since they won't be able to re-register easily.
+- [x] **Lottery Review Step**: Introduced a `REVIEW` state after the lottery runs. Admin can check results via `/list` or web dashboard before sending actual invites with `/send_invites`.
 - [x] **Admin Dashboard (Logs)**: Create a simple web-based admin page to watch logs from the latest registration in real time.
 - [x] **Admin Dashboard (Status)**: Add registration status, user lists, and waitlist visibility to the admin page.
 

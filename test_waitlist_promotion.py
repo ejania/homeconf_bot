@@ -1,7 +1,7 @@
 import unittest
 import sqlite3
 from unittest.mock import MagicMock, AsyncMock, patch
-from bot import close_registration_job, invite_next
+from bot import close_registration_job, invite_next, send_invites
 import messages
 
 # Use an in-memory database for testing
@@ -113,6 +113,23 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
             # Also mock scheduler for invite_next
             with patch('bot.scheduler'):
                 await close_registration_job(event_id, 123)
+                
+                # After lottery, winners are ACCEPTED but not notified. 
+                # Waitlist users are still WAITLIST (not promoted yet).
+                cursor.execute("SELECT COUNT(*) as cnt FROM registrations WHERE status = 'ACCEPTED'")
+                self.assertEqual(cursor.fetchone()['cnt'], 2)
+                
+                cursor.execute("SELECT COUNT(*) as cnt FROM registrations WHERE status = 'INVITED'")
+                self.assertEqual(cursor.fetchone()['cnt'], 0)
+
+                # Now run send_invites
+                update = MagicMock()
+                update.message.reply_text = AsyncMock()
+                update.effective_user.id = 123 # Admin
+                context = MagicMock()
+                context.bot = mock_app.bot
+                with patch('bot.is_admin', return_value=True):
+                    await send_invites(update, context)
         
         # Expectation:
         # 2 Registered -> ACCEPTED
@@ -135,7 +152,7 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
         calls = mock_app.bot.send_message.call_args_list
         
         # Check invites
-        invite_calls = [c for c in calls if c[0][0] in (20, 21)]
+        invite_calls = [c for c in calls if c[0][0] in (20, 21) and "Освободилось место!" in c[0][1]]
         self.assertEqual(len(invite_calls), 2)
         for call in invite_calls:
             self.assertIn("Освободилось место!", call[0][1])

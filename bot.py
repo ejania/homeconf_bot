@@ -234,6 +234,69 @@ async def close_registration_command(update: Update, context: ContextTypes.DEFAU
     await close_registration_job(event['id'], event['chat_id'])
     await update.message.reply_text(messages.REGISTRATION_CLOSED_MANUAL)
 
+async def send_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text(messages.ONLY_ADMIN_SEND_INVITES)
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, total_places FROM events WHERE status = 'REVIEW' ORDER BY id DESC LIMIT 1")
+    event = cursor.fetchone()
+    
+    if not event:
+        await update.message.reply_text(messages.NO_REVIEW_EVENT)
+        conn.close()
+        return
+
+    event_id = event['id']
+    total_places = event['total_places']
+
+    # Notify winners
+    cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'ACCEPTED' AND notified_at IS NULL", (event_id,))
+    winners = cursor.fetchall()
+    for reg in winners:
+        try:
+            if reg['user_id']:
+                await context.bot.send_message(reg['user_id'], messages.LOTTERY_WINNER)
+                cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (datetime.now(), reg['id']))
+        except Exception as e:
+            logging.error(f"Failed to notify winner {reg['user_id']}: {e}")
+
+    # Notify waitlist
+    cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND notified_at IS NULL", (event_id,))
+    losers = cursor.fetchall()
+    for reg in losers:
+        try:
+            if reg['user_id']:
+                # We need to find their actual position in the waitlist
+                cursor.execute("SELECT COUNT(*) as pos FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND priority < ?", (event_id, reg['priority']))
+                pos = cursor.fetchone()['pos']
+                await context.bot.send_message(reg['user_id'], messages.WAITLIST_NOTIFICATION.format(position=pos + 1))
+                cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (datetime.now(), reg['id']))
+        except Exception as e:
+            logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
+
+    cursor.execute("UPDATE events SET status = 'CLOSED' WHERE id = ?", (event_id,))
+    conn.commit()
+
+    # After notifications, check if there are still free spots (e.g. if someone unregistered during review)
+    cursor.execute("SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED')", (event_id,))
+    accepted_count = cursor.fetchone()['count']
+    
+    # We also need to count speakers
+    cursor.execute("SELECT COUNT(*) as count FROM speakers WHERE event_id = ?", (event_id,))
+    speakers_count = cursor.fetchone()['count']
+    
+    spots_remaining = total_places - accepted_count - speakers_count
+    if spots_remaining > 0:
+        logging.info(f"Promoting {spots_remaining} users from waitlist after review...")
+        for _ in range(spots_remaining):
+            await invite_next(event_id)
+
+    conn.close()
+    await update.message.reply_text(messages.SEND_INVITES_SUCCESS)
+
 async def reset_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text(messages.ONLY_ADMIN_RESET)
@@ -282,8 +345,8 @@ async def close_registration_job(event_id, chat_id):
         return
     
     total_places = event['total_places']
-    cursor.execute("UPDATE events SET status = 'CLOSED' WHERE id = ?", (event_id,))
-    log_action(event_id, None, None, 'CLOSE_REGISTRATION', 'Lottery started')
+    cursor.execute("UPDATE events SET status = 'REVIEW' WHERE id = ?", (event_id,))
+    log_action(event_id, None, None, 'CLOSE_REGISTRATION', 'Lottery started, awaiting review')
     
     # Count already accepted (e.g. guests)
     cursor.execute("SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status = 'ACCEPTED'", (event_id,))
@@ -347,13 +410,7 @@ async def close_registration_job(event_id, chat_id):
     
     for reg in winners:
         cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg['id'],))
-        try:
-            await application.bot.send_message(
-                reg['user_id'], 
-                messages.LOTTERY_WINNER
-            )
-        except Exception as e:
-            logging.error(f"Failed to notify winner {reg['user_id']}: {e}")
+        # Notifications skipped for review
 
     # Handle Waitlist Priorities
     # Shift existing waitlist users down by len(lottery_losers)
@@ -368,29 +425,16 @@ async def close_registration_job(event_id, chat_id):
             "UPDATE registrations SET status = 'WAITLIST', priority = ? WHERE id = ?",
             (i, reg['id'])
         )
-        try:
-            await application.bot.send_message(
-                reg['user_id'], 
-                messages.WAITLIST_NOTIFICATION.format(position=i+1)
-            )
-        except Exception as e:
-            logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
+        # Notifications skipped for review
 
     conn.commit()
 
-    # Immediate Promotion if spots available
-    spots_remaining = places_available - len(winners)
-    if spots_remaining > 0:
-        logging.info(f"Promoting {spots_remaining} users from waitlist...")
-        # We need to loop because invite_next only invites one person.
-        # Note: invite_next logic relies on 'WAITLIST' status.
-        # Ensure we call it enough times.
-        for _ in range(spots_remaining):
-            await invite_next(event_id)
+    # Immediate Promotion skipped during review - it will happen during send_invites if needed
 
     conn.close()
     log_action(event_id, None, "System", "LOTTERY_COMPLETE", f"Winners: {len(winners)}, Waitlist: {len(lottery_losers)}")
     await application.bot.send_message(chat_id, messages.REGISTRATION_CLOSED_SUMMARY.format(winners=len(winners), waitlist=len(lottery_losers)))
+    await application.bot.send_message(chat_id, messages.LOTTERY_READY_FOR_REVIEW)
 
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private(update, context):
@@ -725,8 +769,12 @@ async def invite_next(event_id):
     conn = get_db()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT waitlist_timeout_hours FROM events WHERE id = ?", (event_id,))
+    cursor.execute("SELECT waitlist_timeout_hours, status FROM events WHERE id = ?", (event_id,))
     event = cursor.fetchone()
+    if not event or event['status'] == 'REVIEW':
+        conn.close()
+        return
+        
     timeout_hours = event['waitlist_timeout_hours'] if event and event['waitlist_timeout_hours'] is not None else 24
 
     cursor.execute(
@@ -882,9 +930,15 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
     else:
-        display_status = status_map.get(reg['status'], reg['status'])
+        # If the event is in REVIEW status, we should still show REGISTERED status to the user
+        # unless they were already ACCEPTED before the lottery (e.g. as a guest)
+        if reg['event_status'] == 'REVIEW' and reg['status'] in ('ACCEPTED', 'WAITLIST') and reg['guest_of_user_id'] is None:
+            display_status = messages.STATUS_REGISTERED
+        else:
+            display_status = status_map.get(reg['status'], reg['status'])
+            
         msg = messages.STATUS_MSG.format(status=display_status)
-        if reg['status'] == 'WAITLIST':
+        if reg['status'] == 'WAITLIST' and (reg['event_status'] != 'REVIEW' or reg['guest_of_user_id'] is not None):
             cursor.execute("SELECT COUNT(*) as pos FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND priority < ?", (reg['event_id'], reg['priority']))
             msg += messages.WAITLIST_POSITION.format(position=cursor.fetchone()['pos'] + 1)
     
@@ -956,6 +1010,16 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
             vip_taken=vip_total
         )
         msg += messages.EVENT_STATUS_PRE_OPEN
+    elif event['status'] == 'REVIEW':
+        general_total = max(0, total_places - vip_total) if total_places is not None else 0
+        msg = messages.EVENT_STATUS_HEADER.format(
+            status="REVIEW", 
+            vip_taken=vip_total,
+            general_taken=general_taken,
+            general_total=general_total
+        )
+        msg += messages.EVENT_STATUS_REVIEW
+        msg += messages.EVENT_STATUS_CLOSED.format(waitlist=waitlist_count)
     else:
         general_total = max(0, total_places - vip_total) if total_places is not None else 0
         status_str = "OPEN" if event['status'] == 'OPEN' else "CLOSED"
@@ -993,6 +1057,7 @@ async def post_init(app):
         BotCommand("create", messages.DESC_CREATE),
         BotCommand("open", messages.DESC_OPEN),
         BotCommand("close", messages.DESC_CLOSE),
+        BotCommand("send_invites", messages.DESC_SEND_INVITES),
         BotCommand("reset", messages.DESC_RESET),
     ]
     await app.bot.set_my_commands(commands)
@@ -1057,6 +1122,7 @@ def main():
     application.add_handler(CommandHandler("create", create_event))
     application.add_handler(CommandHandler("open", open_event_command))
     application.add_handler(CommandHandler("close", close_registration_command))
+    application.add_handler(CommandHandler("send_invites", send_invites))
     application.add_handler(CommandHandler("register", register))
     application.add_handler(CommandHandler("invite", invite_guest))
     application.add_handler(CommandHandler("unregister", unregister))
