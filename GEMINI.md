@@ -33,7 +33,7 @@ To deploy new changes:
 ## Development Requirements
 - **Testing:**
   - All new features must be accompanied by comprehensive tests.
-  - **MANDATORY:** Always execute the full test suite (`python3 -m unittest discover`) before requesting a deploy or considering a feature complete. Do not rely solely on targeted tests.
+  - **MANDATORY:** Always execute the full test suite using the virtual environment (`./venv/bin/python3 -m unittest discover`) before requesting a deploy or considering a feature complete. Do not rely solely on targeted tests.
 - **Language & Style:**
   - All user-facing messages must be in **Russian**.
   - Tone should be **friendly and informal** (not too official).

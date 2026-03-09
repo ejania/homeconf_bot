@@ -1,9 +1,39 @@
 import os
 import sqlite3
 from flask import Flask, render_template_string
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")
+
+def format_tz(ts):
+    if not ts:
+        return ""
+    target_tz = ZoneInfo("Europe/Berlin")
+    if isinstance(ts, str):
+        try:
+            # fromisoformat handles 'YYYY-MM-DD HH:MM:SS.mmmmmm+HH:MM' or 'YYYY-MM-DD HH:MM:SS'
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                # Naive timestamps from SQLite are assumed to be UTC
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        except ValueError:
+            try:
+                dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+            except ValueError:
+                return ts
+    elif isinstance(ts, datetime):
+        dt = ts
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    else:
+        return ts
+    
+    return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M:%S")
+
+app.jinja_env.filters['format_tz'] = format_tz
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -49,13 +79,13 @@ TEMPLATE = """
             {% if logs %}
                 <div class="row">
                     <div class="col" style="flex: 2;">
-                        <h2>Real-time Action Logs</h2>
+                        <h2>Real-time Action Logs (Zurich)</h2>
                         <div class="table-wrap log-wrap">
                             <table>
                                 <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                                 {% for log in logs %}
                                 <tr>
-                                    <td style="white-space: nowrap;">{{ log['timestamp'] }}</td>
+                                    <td style="white-space: nowrap;">{{ log['timestamp']|format_tz }}</td>
                                     <td>{{ log['username'] or 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
                                     <td><b>{{ log['action'] }}</b></td>
                                     <td>{{ log['details'] }}</td>
@@ -105,11 +135,11 @@ TEMPLATE = """
                     <h2>Admitted (Lottery Winners) ({{ admitted|length }})</h2>
                     <div class="table-wrap">
                         <table>
-                            <tr><th>Username</th><th>Time</th></tr>
+                            <tr><th>Username</th><th>Time (Zurich)</th></tr>
                             {% for r in admitted %}
                             <tr>
                                 <td>{{ r.username }}</td>
-                                <td>{{ r.signup_time }}</td>
+                                <td>{{ r.signup_time|format_tz }}</td>
                             </tr>
                             {% endfor %}
                             {% if not admitted %}<tr><td colspan="2">No admitted users</td></tr>{% endif %}
@@ -119,11 +149,11 @@ TEMPLATE = """
                     <h2>Registered (Lottery Pool) ({{ registered|length }})</h2>
                     <div class="table-wrap">
                         <table>
-                            <tr><th>Username</th><th>Time</th></tr>
+                            <tr><th>Username</th><th>Time (Zurich)</th></tr>
                             {% for r in registered %}
                             <tr>
                                 <td>{{ r.username }}</td>
-                                <td>{{ r.signup_time }}</td>
+                                <td>{{ r.signup_time|format_tz }}</td>
                             </tr>
                             {% endfor %}
                             {% if not registered %}<tr><td colspan="2">No users in pool</td></tr>{% endif %}
@@ -147,13 +177,13 @@ TEMPLATE = """
                 </div>
                 
                 <div class="col" style="flex: 2;">
-                    <h2>Real-time Action Logs</h2>
+                    <h2>Real-time Action Logs (Zurich)</h2>
                     <div class="table-wrap log-wrap">
                         <table>
                             <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                             {% for log in logs %}
                             <tr>
-                                <td style="white-space: nowrap;">{{ log['timestamp'] }}</td>
+                                <td style="white-space: nowrap;">{{ log['timestamp']|format_tz }}</td>
                                 <td>{{ log['username'] or 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
                                 <td><b>{{ log['action'] }}</b></td>
                                 <td>{{ log['details'] }}</td>

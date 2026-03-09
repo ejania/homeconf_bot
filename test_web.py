@@ -45,12 +45,10 @@ class TestWebDashboard(unittest.TestCase):
         html = response.data.decode()
         
         # Check title update
-        self.assertIn("<h2>Real-time Action Logs</h2>", html)
+        self.assertIn("<h2>Real-time Action Logs (Zurich)</h2>", html)
         self.assertNotIn("(Latest 150)", html)
         
         # Check that we see logs beyond 150
-        # Specifically, "ACTION_0" (the first inserted) should be visible if we show ALL (DESC order means it's last)
-        # "ACTION_199" (latest) should be at top.
         self.assertIn("ACTION_0", html)
         self.assertIn("ACTION_199", html)
         
@@ -76,8 +74,41 @@ class TestWebDashboard(unittest.TestCase):
         self.assertNotIn("@test_speaker", html)
         self.assertNotIn("@test_user", html)
         # Should STILL show logs
-        self.assertIn("Real-time Action Logs", html)
+        self.assertIn("Real-time Action Logs (Zurich)", html)
         self.assertEqual(html.count("ACTION_"), 200)
+
+    def test_timestamp_formatting_zurich(self):
+        cursor = self.conn.cursor()
+        # Insert a registration with UTC time
+        # UTC 11:00:00 -> Zurich 12:00:00 (assuming CET/CEST conversion)
+        # In March 2024 (before last Sunday), it's CET (+01:00)
+        cursor.execute(
+            "INSERT INTO registrations (event_id, username, status, signup_time) VALUES (1, 'zurich_test_user', 'REGISTERED', ?)", 
+            ("2024-03-09 11:00:00+00:00",)
+        )
+        self.conn.commit()
+        
+        response = self.client.get('/')
+        html = response.data.decode()
+        
+        # Check that it is converted to Zurich time (CET in March is +1)
+        self.assertIn("2024-03-09 12:00:00", html)
+        self.assertNotIn("2024-03-09 11:00:00", html)
+
+    def test_timestamp_formatting_naive(self):
+        cursor = self.conn.cursor()
+        # Insert a log with naive time (should be treated as UTC and converted to Zurich)
+        cursor.execute(
+            "INSERT INTO action_logs (event_id, action, timestamp) VALUES (1, 'NAIVE_LOG', ?)", 
+            ("2024-03-09 10:00:00",)
+        )
+        self.conn.commit()
+        
+        response = self.client.get('/')
+        html = response.data.decode()
+        
+        # 10:00 UTC -> 11:00 Zurich
+        self.assertIn("2024-03-09 11:00:00", html)
 
 if __name__ == '__main__':
     unittest.main()
