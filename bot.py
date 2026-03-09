@@ -3,6 +3,7 @@ import random
 import os
 import asyncio
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
@@ -32,6 +33,12 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is not set")
 
 ADMIN_IDS = {int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()}
+
+# Timezone configuration
+TZ = ZoneInfo("Europe/Berlin")
+
+def get_now():
+    return datetime.now(TZ)
 
 # Global scheduler and application
 scheduler = None
@@ -186,7 +193,7 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.close()
         return
 
-    end_time = datetime.now() + timedelta(hours=hours)
+    end_time = get_now() + timedelta(hours=hours)
     
     cursor.execute(
         "UPDATE events SET status = 'OPEN', end_time = ?, total_places = ?, waitlist_timeout_hours = ?, registration_duration_hours = ? WHERE id = ?", 
@@ -259,7 +266,7 @@ async def send_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if reg['user_id']:
                 await context.bot.send_message(reg['user_id'], messages.LOTTERY_WINNER)
-                cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (datetime.now(), reg['id']))
+                cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (get_now(), reg['id']))
         except Exception as e:
             logging.error(f"Failed to notify winner {reg['user_id']}: {e}")
 
@@ -273,7 +280,7 @@ async def send_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.execute("SELECT COUNT(*) as pos FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND priority < ?", (event_id, reg['priority']))
                 pos = cursor.fetchone()['pos']
                 await context.bot.send_message(reg['user_id'], messages.WAITLIST_NOTIFICATION.format(position=pos + 1))
-                cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (datetime.now(), reg['id']))
+                cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (get_now(), reg['id']))
         except Exception as e:
             logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
 
@@ -484,7 +491,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pending_invite:
             cursor.execute(
                 "UPDATE registrations SET user_id = ?, chat_id = ?, first_name = ?, signup_time = ? WHERE id = ?",
-                (update.effective_user.id, update.effective_chat.id, update.effective_user.first_name, datetime.now(), pending_invite['id'])
+                (update.effective_user.id, update.effective_chat.id, update.effective_user.first_name, get_now(), pending_invite['id'])
             )
             conn.commit()
             log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER_GUEST', 'Claimed guest spot')
@@ -516,7 +523,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if event['status'] == 'OPEN':
         cursor.execute(
             "INSERT INTO registrations (event_id, user_id, chat_id, username, first_name, status, signup_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (event['id'], update.effective_user.id, update.effective_chat.id, update.effective_user.username, update.effective_user.first_name, 'REGISTERED', datetime.now())
+            (event['id'], update.effective_user.id, update.effective_chat.id, update.effective_user.username, update.effective_user.first_name, 'REGISTERED', get_now())
         )
         log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER', 'Status: REGISTERED')
         try:
@@ -535,7 +542,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         max_p = row['max_p'] if row['max_p'] is not None else -1
         cursor.execute(
             "INSERT INTO registrations (event_id, user_id, chat_id, username, first_name, status, signup_time, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (event['id'], update.effective_user.id, update.effective_chat.id, update.effective_user.username, update.effective_user.first_name, 'WAITLIST', datetime.now(), max_p + 1)
+            (event['id'], update.effective_user.id, update.effective_chat.id, update.effective_user.username, update.effective_user.first_name, 'WAITLIST', get_now(), max_p + 1)
         )
         log_action(event['id'], update.effective_user.id, update.effective_user.username, 'REGISTER', 'Status: WAITLIST')
         try:
@@ -679,7 +686,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Create new registration for guest
         cursor.execute(
             "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?)",
-            (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, datetime.now())
+            (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, get_now())
         )
         log_details = f'Guest: {guest_username}'
         await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_NEW.format(username=guest_username))
@@ -784,10 +791,10 @@ async def invite_next(event_id):
     next_reg = cursor.fetchone()
     
     if next_reg:
-        expires_at = datetime.now() + timedelta(hours=timeout_hours)
+        expires_at = get_now() + timedelta(hours=timeout_hours)
         cursor.execute(
             "UPDATE registrations SET status = 'INVITED', notified_at = ?, expires_at = ? WHERE id = ?",
-            (datetime.now(), expires_at, next_reg['id'])
+            (get_now(), expires_at, next_reg['id'])
         )
         conn.commit()
         log_action(event_id, next_reg['user_id'], next_reg['username'], 'INVITE_NEXT', 'Waitlist invited')
@@ -1032,6 +1039,17 @@ async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if event['status'] == 'OPEN':
             msg += messages.EVENT_STATUS_OPEN.format(count=lottery_count)
+            if event['end_time']:
+                try:
+                    et = datetime.fromisoformat(event['end_time'])
+                    # If it's naive, assume UTC as it was stored before
+                    if et.tzinfo is None:
+                        et = et.replace(tzinfo=ZoneInfo("UTC"))
+                    # Convert to our local timezone
+                    et_local = et.astimezone(TZ)
+                    msg += messages.EVENT_REGISTRATION_ENDS.format(end_time=et_local.strftime("%Y-%m-%d %H:%M"))
+                except Exception as e:
+                    logging.error(f"Error formatting end_time in /list: {e}")
         elif event['status'] == 'CLOSED':
             msg += messages.EVENT_STATUS_CLOSED.format(waitlist=waitlist_count)
             if invited_count > 0:
@@ -1071,7 +1089,10 @@ async def post_init(app):
     for event in open_events:
         try:
             end_time = datetime.fromisoformat(event['end_time'])
-            if end_time <= datetime.now():
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=ZoneInfo("UTC"))
+            
+            if end_time <= get_now():
                 # Already expired, run close logic now
                 logging.info(f"Event {event['id']} expired while bot was down, closing now.")
                 await close_registration_job(event['id'], event['chat_id'])
@@ -1094,7 +1115,10 @@ async def post_init(app):
     for reg in invited_regs:
         try:
             expires_at = datetime.fromisoformat(reg['expires_at'])
-            if expires_at <= datetime.now():
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=ZoneInfo("UTC"))
+
+            if expires_at <= get_now():
                 logging.info(f"Invitation {reg['id']} expired while bot was down, checking timeout now.")
                 await check_timeout_job(reg['id'])
             else:

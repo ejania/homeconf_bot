@@ -95,6 +95,7 @@ EVENT_STATUS_HEADER_PRE_OPEN = (
 )
 EVENT_STATUS_PRE_OPEN = "Регистрация пока закрыта. Спикеры могут звать гостей."
 EVENT_STATUS_OPEN = "Участников в лотерее: {count}\n\nЛотерея запустится, когда регистрация закроется."
+EVENT_REGISTRATION_ENDS = "\nРегистрация закроется в: {end_time} (CET/CEST)"
 EVENT_STATUS_REVIEW = "Лотерея проведена, ждем подтверждения админа.\n"
 EVENT_STATUS_CLOSED = "Человек в листе ожидания: {waitlist}\n"
 EVENT_STATUS_PENDING = "Ожидают подтверждения: {invited}\n"
