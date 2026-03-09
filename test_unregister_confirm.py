@@ -69,7 +69,7 @@ class TestUnregisterConfirm(unittest.IsolatedAsyncioTestCase):
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         ''')
-        cursor.execute("CREATE TABLE IF NOT EXISTS action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, action TEXT, details TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, action TEXT, details TEXT)")
         self.real_conn.commit()
 
     def tearDown(self):
@@ -88,6 +88,7 @@ class TestUnregisterConfirm(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 111
         update.effective_user.username = "testuser"
+        update.effective_user.first_name = "testuser_name"
         update.message.reply_text = AsyncMock()
         context = MagicMock()
 

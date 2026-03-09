@@ -42,23 +42,13 @@ def init_db():
         )
     ''')
     
-    # Simple migration for existing DBs
-    try:
-        cursor.execute("ALTER TABLE registrations ADD COLUMN guest_of_user_id INTEGER")
-    except sqlite3.OperationalError:
-        pass # Column likely already exists
-
-    try:
-        cursor.execute("ALTER TABLE events ADD COLUMN registration_duration_hours INTEGER")
-    except sqlite3.OperationalError:
-        pass
-
     # Speakers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS speakers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id INTEGER,
             username TEXT, -- lowercased for matching
+            first_name TEXT,
             FOREIGN KEY (event_id) REFERENCES events (id)
         )
     ''')
@@ -70,6 +60,7 @@ def init_db():
             event_id INTEGER,
             user_id INTEGER,
             username TEXT,
+            first_name TEXT,
             action TEXT,
             details TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -77,6 +68,27 @@ def init_db():
         )
     ''')
     
+    # Simple migration for existing DBs
+    try:
+        cursor.execute("ALTER TABLE registrations ADD COLUMN guest_of_user_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE events ADD COLUMN registration_duration_hours INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE speakers ADD COLUMN first_name TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE action_logs ADD COLUMN first_name TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 

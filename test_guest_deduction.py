@@ -73,8 +73,7 @@ class TestGuestDeduction(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)

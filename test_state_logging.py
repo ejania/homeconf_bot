@@ -67,8 +67,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)
@@ -97,6 +96,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_user.id = 111
         update.effective_user.username = "admin_user"
+        update.effective_user.first_name = "admin_user_name"
         update.effective_chat.id = 123
         update.message.reply_text = AsyncMock()
 
@@ -114,6 +114,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         logs = cursor.fetchall()
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]['username'], "admin_user")
+        self.assertEqual(logs[0]['first_name'], "admin_user_name")
         self.assertEqual(logs[0]['action'], "CREATE_EVENT")
 
         # 2. Test open_event logs
@@ -158,6 +159,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_user.id = 888
         update.effective_user.username = "speaker"
+        update.effective_user.first_name = "speaker_name"
         update.effective_chat.type = "private"
         update.message.reply_text = AsyncMock()
 
@@ -213,6 +215,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_user.id = 123
         update.effective_user.username = "user123"
+        update.effective_user.first_name = "user123_name"
         update.effective_chat.type = "private"
         update.message.reply_text = AsyncMock()
 
@@ -226,12 +229,14 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
 
         # 2. Register Fail: Manual Speaker
         update.effective_user.username = "speaker_manual"
+        update.effective_user.first_name = "speaker_manual_name"
         await bot.register(update, context)
         cursor.execute("SELECT * FROM action_logs WHERE action = 'REGISTER_FAIL' AND details = 'User is in manual speakers list'")
         self.assertEqual(len(cursor.fetchall()), 1)
 
         # 3. Invite Fail: User not speaker
         update.effective_user.username = "user123"
+        update.effective_user.first_name = "user123_name"
         update.effective_user.id = 123
         # Mock not being a speaker
         member_mock = MagicMock()
@@ -259,6 +264,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_user.id = 777
         update.effective_user.username = "user777"
+        update.effective_user.first_name = "user777_name"
         update.effective_chat.type = "private"
         update.message.reply_text = AsyncMock()
         

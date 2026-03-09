@@ -45,8 +45,7 @@ class TestGuestValidation(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)
@@ -118,6 +117,7 @@ class TestGuestValidation(unittest.IsolatedAsyncioTestCase):
         self.context.args = ["guest_charlie"]
         self.update.effective_user.id = 102
         self.update.effective_user.username = "speaker_bob"
+        self.update.effective_user.first_name = "speaker_bob_name"
         
         # Mock group check
         self.context.bot.get_chat_member = AsyncMock()
@@ -137,6 +137,7 @@ class TestGuestValidation(unittest.IsolatedAsyncioTestCase):
         self.context.args = ["<@guest_dan>"]
         self.update.effective_user.id = 103
         self.update.effective_user.username = "speaker_diana"
+        self.update.effective_user.first_name = "speaker_diana_name"
         
         # Mock group check
         self.context.bot.get_chat_member = AsyncMock()
@@ -164,6 +165,7 @@ class TestGuestValidation(unittest.IsolatedAsyncioTestCase):
         self.context.args = ["<guest_eve>"]
         self.update.effective_user.id = 104
         self.update.effective_user.username = "speaker_edward"
+        self.update.effective_user.first_name = "speaker_edward_name"
         
         # Mock group check
         self.context.bot.get_chat_member = AsyncMock()

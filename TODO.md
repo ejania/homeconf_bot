@@ -20,6 +20,7 @@
 - [x] **Cleanup**: All tests passing.
 
 ## Pending Tasks
+- [x] **Handle Users Without Usernames**: Implement a strategy for users who don't have a Telegram username (e.g., use their first name + user ID for identification in lists and web dashboard).
 - [x] **Logging Fixes**: Logging is still not working! (User reported missing logs for guest invites). Needs investigation.
 - [x] **Lottery Randomness Test**: Add a test that checks that the lottery is random (two different draws should give different results).
 - [x] **State-Change Logging**: Log all state-changing events (new user registration, opening registration, invites, etc.). Logs should be persistent and not deleted during reset.
@@ -27,7 +28,9 @@
 - [x] **Unregister Confirmation**: When a user unregisters after the lottery has ended, if there are no free spots, ask for additional confirmation since they won't be able to re-register easily.
 - [x] **Lottery Review Step**: Introduced a `REVIEW` state after the lottery runs. Admin can check results via `/list` or web dashboard before sending actual invites with `/send_invites`.
 - [x] **Admin Dashboard (Logs)**: Create a simple web-based admin page to watch logs from the latest registration in real time.
-- [x] **Admin Dashboard (Status)**: Add registration status, user lists, and waitlist visibility to the admin page.
+- [ ] **Admin Dashboard (Status)**: Add registration status, user lists, and waitlist visibility to the admin page.
+- [ ] **Invite by Phone Number**: Allow speakers to invite guests using their phone number if they don't have a Telegram username.
+- [x] **Web Interface Scroll Persistence**: Fix the issue where the dashboard scrolls to the top on every refresh, making it difficult to read long lists.
 
 ## Notes for Next Session
 - **Current State**: The bot is deployed on `104.248.28.207`. The current active flow uses `/create` -> `/open` -> `/close`.

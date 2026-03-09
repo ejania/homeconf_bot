@@ -21,9 +21,9 @@ class TestWebDashboard(unittest.TestCase):
         
         cursor = self.conn.cursor()
         cursor.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, status TEXT, total_places INTEGER)")
-        cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT)")
+        cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, first_name TEXT)")
         cursor.execute("CREATE TABLE registrations (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, status TEXT, guest_of_user_id INTEGER, signup_time DATETIME, priority INTEGER)")
-        cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, timestamp DATETIME, username TEXT, user_id INTEGER, action TEXT, details TEXT)")
+        cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, timestamp DATETIME, username TEXT, first_name TEXT, user_id INTEGER, action TEXT, details TEXT)")
         
         # Insert test data
         cursor.execute("INSERT INTO events (status, total_places) VALUES ('OPEN', 10)")
@@ -38,6 +38,34 @@ class TestWebDashboard(unittest.TestCase):
     def tearDown(self):
         self.patcher.stop()
         self.conn.close()
+
+    def test_user_formatting_on_dashboard(self):
+        cursor = self.conn.cursor()
+        # 1. User with username
+        cursor.execute("INSERT INTO registrations (event_id, username, first_name, status) VALUES (1, 'user_with_at', 'Alice', 'ACCEPTED')")
+        # 2. User without username (first_name only)
+        cursor.execute("INSERT INTO registrations (event_id, username, first_name, status) VALUES (1, NULL, 'Bob', 'ACCEPTED')")
+        # 3. User with numeric username (should be treated as ID)
+        cursor.execute("INSERT INTO registrations (event_id, username, first_name, status) VALUES (1, '12345', 'Charlie', 'ACCEPTED')")
+        # 4. Speaker without username
+        cursor.execute("INSERT INTO speakers (event_id, username, first_name) VALUES (1, '99999', 'SpeakerDave')")
+        
+        self.conn.commit()
+        
+        response = self.client.get('/')
+        html = response.data.decode()
+        
+        self.assertIn("@user_with_at", html)
+        self.assertIn("Bob", html)
+        self.assertIn("Charlie", html)
+        self.assertIn("SpeakerDave", html)
+
+    def test_scroll_persistence_script_present(self):
+        response = self.client.get('/')
+        html = response.data.decode()
+        self.assertIn("localStorage.setItem('scrollPosition', window.scrollY)", html)
+        self.assertIn("window.scrollTo(0, parseInt(scrollPos))", html)
+        self.assertIn('body onload="restoreScroll()"', html)
 
     def test_dashboard_shows_all_logs(self):
         response = self.client.get('/')

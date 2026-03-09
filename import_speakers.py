@@ -52,6 +52,7 @@ async def main():
                 continue # Skip bots
                 
             username = user.username.lower() if user.username else None
+            first_name = user.first_name
             
             # If no username, use ID as string for speakers table (which usually expects username)
             # though our logic currently matches lowercase usernames. We should probably only add users 
@@ -64,7 +65,7 @@ async def main():
                 skipped += 1
                 continue
                 
-            cursor.execute("INSERT INTO speakers (event_id, username) VALUES (?, ?)", (event_id, identifier))
+            cursor.execute("INSERT INTO speakers (event_id, username, first_name) VALUES (?, ?, ?)", (event_id, identifier, first_name))
             inserted += 1
             
         conn.commit()

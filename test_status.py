@@ -79,8 +79,7 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)
@@ -130,7 +129,8 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_chat.type = "private"
         update.effective_user.id = 888
-        update.effective_user.username = "Speaker_User" # Mixed case
+        update.effective_user.username = "Speaker_User"
+        update.effective_user.first_name = "Speaker_User_name" # Mixed case
         update.message.reply_text = AsyncMock()
 
         context = MagicMock()
@@ -153,6 +153,7 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 123
         update.effective_user.username = "registered_user"
+        update.effective_user.first_name = "registered_user_name"
         update.message.reply_text = AsyncMock()
         context = MagicMock()
 
@@ -175,6 +176,7 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 222
         update.effective_user.username = "waitlist_user"
+        update.effective_user.first_name = "waitlist_user_name"
         update.message.reply_text = AsyncMock()
         context = MagicMock()
 
@@ -193,6 +195,7 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 777
         update.effective_user.username = "not_registered"
+        update.effective_user.first_name = "not_registered_name"
         update.message.reply_text = AsyncMock()
         context = MagicMock()
 

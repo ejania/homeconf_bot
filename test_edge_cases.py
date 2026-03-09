@@ -43,8 +43,7 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)
@@ -143,6 +142,7 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 555
         update.effective_user.username = "SpeakerBob"
+        update.effective_user.first_name = "SpeakerBob_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -176,6 +176,7 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 555
         update.effective_user.username = "Speaker"
+        update.effective_user.first_name = "Speaker_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()

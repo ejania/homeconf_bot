@@ -33,7 +33,28 @@ def format_tz(ts):
     
     return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M:%S")
 
+def format_name(user):
+    # user is a sqlite3.Row, it doesn't have .get() but can be converted or accessed by index/name
+    try:
+        username = user['username']
+    except (IndexError, KeyError, TypeError):
+        username = None
+
+    try:
+        first_name = user['first_name']
+    except (IndexError, KeyError, TypeError):
+        first_name = None
+
+    if username and not str(username).isdigit():
+        return f"@{username}"
+    if first_name:
+        return first_name
+    if username: # This would be the ID if it was a speaker without username
+        return f"ID: {username}"
+    return "Unknown"
+
 app.jinja_env.filters['format_tz'] = format_tz
+app.jinja_env.filters['format_name'] = format_name
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -66,11 +87,46 @@ TEMPLATE = """
     </style>
     <script>
         function reloadData() {
-            setTimeout(() => location.reload(), 5000);
+            setTimeout(() => {
+                // Save window scroll
+                localStorage.setItem('scrollPosition', window.scrollY);
+                
+                // Save scroll positions for all .table-wrap elements with an ID
+                const scrolls = {};
+                document.querySelectorAll('.table-wrap').forEach((el) => {
+                    if (el.id) {
+                        scrolls[el.id] = el.scrollTop;
+                    }
+                });
+                localStorage.setItem('containerScrolls', JSON.stringify(scrolls));
+                
+                location.reload();
+            }, 5000);
+        }
+
+        function restoreScroll() {
+            // Restore window scroll
+            const scrollPos = localStorage.getItem('scrollPosition');
+            if (scrollPos) {
+                window.scrollTo(0, parseInt(scrollPos));
+                localStorage.removeItem('scrollPosition');
+            }
+
+            // Restore .table-wrap scrolls
+            const scrolls = JSON.parse(localStorage.getItem('containerScrolls') || '{}');
+            for (const id in scrolls) {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.scrollTop = scrolls[id];
+                }
+            }
+            localStorage.removeItem('containerScrolls');
+
+            reloadData();
         }
     </script>
 </head>
-<body onload="reloadData()">
+<body onload="restoreScroll()">
     <div class="container">
         <h1>Admin Dashboard</h1>
         <h2>Current Event Status</h2>
@@ -80,13 +136,13 @@ TEMPLATE = """
                 <div class="row">
                     <div class="col" style="flex: 2;">
                         <h2>Real-time Action Logs (Zurich)</h2>
-                        <div class="table-wrap log-wrap">
+                        <div class="table-wrap log-wrap" id="logs-wrap-no-event">
                             <table>
                                 <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                                 {% for log in logs %}
                                 <tr>
                                     <td style="white-space: nowrap;">{{ log['timestamp']|format_tz }}</td>
-                                    <td>{{ log['username'] or 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
+                                    <td>{{ log|format_name if log['username'] or log['first_name'] else 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
                                     <td><b>{{ log['action'] }}</b></td>
                                     <td>{{ log['details'] }}</td>
                                 </tr>
@@ -107,23 +163,23 @@ TEMPLATE = """
                 <div class="col" style="flex: 2;">
                     
                     <h2>Speakers ({{ speakers|length }})</h2>
-                    <div class="table-wrap" style="max-height: 200px;">
+                    <div class="table-wrap" id="speakers-wrap" style="max-height: 200px;">
                         <table>
-                            <tr><th>Username</th></tr>
+                            <tr><th>Name</th></tr>
                             {% for s in speakers %}
-                            <tr><td>@{{ s.username }}</td></tr>
+                            <tr><td>{{ s|format_name }}</td></tr>
                             {% endfor %}
                             {% if not speakers %}<tr><td>No manual speakers added (may be using Telegram Group)</td></tr>{% endif %}
                         </table>
                     </div>
 
                     <h2>Speakers' guests ({{ invitees|length }})</h2>
-                    <div class="table-wrap">
+                    <div class="table-wrap" id="invitees-wrap">
                         <table>
-                            <tr><th>Username</th><th>Status</th><th>Invited By</th></tr>
+                            <tr><th>Name</th><th>Status</th><th>Invited By</th></tr>
                             {% for r in invitees %}
                             <tr>
-                                <td>{{ r.username or '-' }}</td>
+                                <td>{{ r|format_name }}</td>
                                 <td><span class="badge">{{ r.status }}</span></td>
                                 <td>{{ r.speaker_username or r.guest_of_user_id }}</td>
                             </tr>
@@ -133,12 +189,12 @@ TEMPLATE = """
                     </div>
 
                     <h2>Admitted (Lottery Winners) ({{ admitted|length }})</h2>
-                    <div class="table-wrap">
+                    <div class="table-wrap" id="admitted-wrap">
                         <table>
-                            <tr><th>Username</th><th>Time (Zurich)</th></tr>
+                            <tr><th>Name</th><th>Time (Zurich)</th></tr>
                             {% for r in admitted %}
                             <tr>
-                                <td>{{ r.username }}</td>
+                                <td>{{ r|format_name }}</td>
                                 <td>{{ r.signup_time|format_tz }}</td>
                             </tr>
                             {% endfor %}
@@ -147,12 +203,12 @@ TEMPLATE = """
                     </div>
 
                     <h2>Registered (Lottery Pool) ({{ registered|length }})</h2>
-                    <div class="table-wrap">
+                    <div class="table-wrap" id="registered-wrap">
                         <table>
-                            <tr><th>Username</th><th>Time (Zurich)</th></tr>
+                            <tr><th>Name</th><th>Time (Zurich)</th></tr>
                             {% for r in registered %}
                             <tr>
-                                <td>{{ r.username }}</td>
+                                <td>{{ r|format_name }}</td>
                                 <td>{{ r.signup_time|format_tz }}</td>
                             </tr>
                             {% endfor %}
@@ -161,13 +217,13 @@ TEMPLATE = """
                     </div>
 
                     <h2>Waitlist ({{ waitlist|length }})</h2>
-                    <div class="table-wrap">
+                    <div class="table-wrap" id="waitlist-wrap">
                         <table>
-                            <tr><th>Priority</th><th>Username</th><th>Status</th></tr>
+                            <tr><th>Priority</th><th>Name</th><th>Status</th></tr>
                             {% for r in waitlist %}
                             <tr>
                                 <td>{{ r.priority }}</td>
-                                <td>{{ r.username }}</td>
+                                <td>{{ r|format_name }}</td>
                                 <td><span class="badge">{{ r.status }}</span></td>
                             </tr>
                             {% endfor %}
@@ -178,13 +234,13 @@ TEMPLATE = """
                 
                 <div class="col" style="flex: 2;">
                     <h2>Real-time Action Logs (Zurich)</h2>
-                    <div class="table-wrap log-wrap">
+                    <div class="table-wrap log-wrap" id="logs-wrap-event">
                         <table>
                             <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
                             {% for log in logs %}
                             <tr>
                                 <td style="white-space: nowrap;">{{ log['timestamp']|format_tz }}</td>
-                                <td>{{ log['username'] or 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
+                                <td>{{ log|format_name if log['username'] or log['first_name'] else 'System' }} {{ '(' ~ log['user_id'] ~ ')' if log['user_id'] else '' }}</td>
                                 <td><b>{{ log['action'] }}</b></td>
                                 <td>{{ log['details'] }}</td>
                             </tr>

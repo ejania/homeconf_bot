@@ -79,8 +79,7 @@ class TestUnregisterSpeaker(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)
@@ -104,6 +103,7 @@ class TestUnregisterSpeaker(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 999
         update.effective_user.username = "speaker_user"
+        update.effective_user.first_name = "speaker_user_name"
         update.message.reply_text = AsyncMock()
 
         # Mock context and chat member check
@@ -131,6 +131,7 @@ class TestUnregisterSpeaker(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 888
         update.effective_user.username = "speaker_manual"
+        update.effective_user.first_name = "speaker_manual_name"
         update.message.reply_text = AsyncMock()
 
         context = MagicMock()

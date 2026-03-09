@@ -45,7 +45,7 @@ class TestLotteryReview(unittest.IsolatedAsyncioTestCase):
         cursor.execute("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, status TEXT, total_places INTEGER, speakers_group_id TEXT, waitlist_timeout_hours INTEGER, end_time DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
         cursor.execute("CREATE TABLE registrations (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, user_id INTEGER, chat_id INTEGER, username TEXT, first_name TEXT, status TEXT, signup_time DATETIME, priority INTEGER, notified_at DATETIME, expires_at DATETIME, guest_of_user_id INTEGER)")
         cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, username TEXT)")
-        cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, user_id INTEGER, username TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
+        cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
         self.conn.commit()
 
         # Admin IDs patch

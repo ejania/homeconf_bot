@@ -82,8 +82,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER,
                 user_id INTEGER,
-                username TEXT,
-                action TEXT,
+                username TEXT, first_name TEXT, action TEXT,
                 details TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (event_id) REFERENCES events (id)
@@ -112,6 +111,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 456
         update.effective_user.username = "user_456"
+        update.effective_user.first_name = "user_456_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -150,6 +150,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 111
         update.effective_user.username = "user_111"
+        update.effective_user.first_name = "user_111_name"
         
         # We need to simulate the callback
         cursor.execute("SELECT id FROM registrations WHERE user_id = 111")
@@ -192,6 +193,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 999 # Speaker
         update.effective_user.username = "speaker_user"
+        update.effective_user.first_name = "speaker_user_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -222,6 +224,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 888 # Not Speaker
         update.effective_user.username = "not_speaker"
+        update.effective_user.first_name = "not_speaker_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -251,6 +254,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 777
         update.effective_user.username = "guest_user"
+        update.effective_user.first_name = "guest_user_name"
         update.effective_user.first_name = "Guest"
         update.effective_chat.id = 1000
         update.message.reply_text = AsyncMock()
@@ -315,6 +319,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 999 # Speaker
         update.effective_user.username = "speaker_user"
+        update.effective_user.first_name = "speaker_user_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -345,6 +350,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 999 # Speaker
         update.effective_user.username = "speaker_user"
+        update.effective_user.first_name = "speaker_user_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
@@ -382,6 +388,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.type = "private"
         update.effective_user.id = 777
         update.effective_user.username = "guest_user"
+        update.effective_user.first_name = "guest_user_name"
         update.message.reply_text = AsyncMock()
         
         context = MagicMock()
