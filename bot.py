@@ -187,7 +187,14 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         hours = int(context.args[0])
         places = int(context.args[1])
-        timeout_hours = int(context.args[2]) if len(context.args) > 2 else 24
+        # Parse event datetime (can be "YYYY-MM-DD HH:MM")
+        event_dt_str = f"{context.args[2]} {context.args[3]}"
+        event_start_time = datetime.strptime(event_dt_str, '%Y-%m-%d %H:%M')
+        # If no timezone info, assume UTC or local - but let's be consistent with get_now()
+        # get_now() is datetime.now(ZoneInfo("UTC"))
+        event_start_time = event_start_time.replace(tzinfo=ZoneInfo("UTC"))
+        
+        timeout_hours = 24
     except (IndexError, ValueError):
         await update.message.reply_text(messages.USAGE_OPEN)
         conn.close()
@@ -196,8 +203,8 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     end_time = get_now() + timedelta(hours=hours)
     
     cursor.execute(
-        "UPDATE events SET status = 'OPEN', end_time = ?, total_places = ?, waitlist_timeout_hours = ?, registration_duration_hours = ? WHERE id = ?", 
-        (end_time, places, timeout_hours, hours, event['id'])
+        "UPDATE events SET status = 'OPEN', end_time = ?, total_places = ?, waitlist_timeout_hours = ?, registration_duration_hours = ?, event_start_time = ? WHERE id = ?", 
+        (end_time, places, timeout_hours, hours, event_start_time, event['id'])
     )
     conn.commit()
     log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'OPEN_EVENT', f'places={places}, end_time={end_time}')
@@ -776,14 +783,42 @@ async def invite_next(event_id):
     conn = get_db()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT waitlist_timeout_hours, status FROM events WHERE id = ?", (event_id,))
+    cursor.execute("SELECT status, event_start_time FROM events WHERE id = ?", (event_id,))
     event = cursor.fetchone()
     if not event or event['status'] == 'REVIEW':
         conn.close()
         return
         
-    timeout_hours = event['waitlist_timeout_hours'] if event and event['waitlist_timeout_hours'] is not None else 24
+    # Default timeout is 24h
+    default_timeout = 24
+    
+    # Calculate dynamic timeout based on distance to event
+    now = get_now()
+    timeout_hours = default_timeout
+    
+    if event['event_start_time']:
+        # Ensure event_start_time has tzinfo for comparison
+        event_start = event['event_start_time']
+        if isinstance(event_start, str):
+            event_start = datetime.fromisoformat(event_start)
+        if event_start.tzinfo is None:
+            event_start = event_start.replace(tzinfo=ZoneInfo("UTC"))
+            
+        time_to_event = event_start - now
+        
+        # Stop promotions 2 hours before the event
+        if time_to_event < timedelta(hours=2):
+            logging.info(f"Event {event_id} starts in {time_to_event}, stopping waitlist promotions.")
+            conn.close()
+            return
 
+        if time_to_event < timedelta(hours=24):
+            timeout_hours = 1
+        elif time_to_event < timedelta(hours=48):
+            timeout_hours = 12
+        else:
+            timeout_hours = default_timeout
+            
     cursor.execute(
         "SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC LIMIT 1",
         (event_id,)

@@ -18,6 +18,7 @@ def init_db():
             speakers_group_id TEXT,
             waitlist_timeout_hours INTEGER,
             end_time DATETIME,
+            event_start_time DATETIME,
             registration_duration_hours INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -76,6 +77,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE events ADD COLUMN registration_duration_hours INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE events ADD COLUMN event_start_time DATETIME")
     except sqlite3.OperationalError:
         pass
 

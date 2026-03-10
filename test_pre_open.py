@@ -40,6 +40,7 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
                 end_time DATETIME,
+                event_start_time DATETIME,
                 registration_duration_hours INTEGER
             )
         ''')
@@ -143,7 +144,7 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
         update_open.effective_user.id = 999
         update_open.message.reply_text = AsyncMock()
         context_open = MagicMock()
-        context_open.args = ["2", "10"] # 2 hours, 10 places
+        context_open.args = ["2", "10", "2026-03-21", "18:00"] # 2 hours, 10 places, date, time
         
         with patch('bot.is_admin', return_value=True):
             with patch('bot.scheduler') as mock_scheduler:

@@ -40,8 +40,9 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
                 total_places INTEGER,
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
-                registration_duration_hours INTEGER,
                 end_time DATETIME,
+                event_start_time DATETIME,
+                registration_duration_hours INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -119,7 +120,7 @@ class TestStateLogging(unittest.IsolatedAsyncioTestCase):
 
         # 2. Test open_event logs
         # Need to mock scheduler
-        context.args = ["1", "10"]
+        context.args = ["1", "10", "2026-03-21", "18:00"]
         with patch('bot.scheduler') as mock_scheduler:
             await open_event_command(update, context)
             

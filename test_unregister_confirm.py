@@ -40,6 +40,7 @@ class TestUnregisterConfirm(unittest.IsolatedAsyncioTestCase):
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
                 end_time DATETIME,
+                event_start_time DATETIME,
                 registration_duration_hours INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )

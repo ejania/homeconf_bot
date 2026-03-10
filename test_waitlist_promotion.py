@@ -39,7 +39,8 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
                 total_places INTEGER,
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
-                end_time DATETIME
+                end_time DATETIME,
+                event_start_time DATETIME
             )
         ''')
         cursor.execute('''
@@ -196,6 +197,64 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
         loser = cursor.fetchone()
         self.assertIsNotNone(loser)
         self.assertEqual(loser['priority'], 0, "Lottery loser should get top priority")
+
+    async def test_dynamic_timeout_waitlist(self):
+        # 1. Test > 48 hours -> Default (24h)
+        cursor = self.real_conn.cursor()
+        from bot import get_now
+        from datetime import timedelta
+        
+        event_start_48h = get_now() + timedelta(hours=50)
+        cursor.execute("INSERT INTO events (chat_id, status, total_places, event_start_time, waitlist_timeout_hours) VALUES (123, 'CLOSED', 1, ?, 24)", (event_start_48h,))
+        event_id = cursor.lastrowid
+        cursor.execute("INSERT INTO registrations (event_id, user_id, status, priority) VALUES (?, 101, 'WAITLIST', 0)", (event_id,))
+        self.real_conn.commit()
+        
+        with patch('bot.application') as mock_app:
+            mock_app.bot.send_message = AsyncMock()
+            with patch('bot.scheduler'):
+                await invite_next(event_id)
+                self.assertIn("24 ч.", mock_app.bot.send_message.call_args[0][1])
+
+        # 2. Test 24-48 hours -> 12h
+        event_start_24h = get_now() + timedelta(hours=30)
+        cursor.execute("UPDATE events SET event_start_time = ? WHERE id = ?", (event_start_24h, event_id))
+        cursor.execute("UPDATE registrations SET status = 'WAITLIST' WHERE user_id = 101")
+        self.real_conn.commit()
+        
+        with patch('bot.application') as mock_app:
+            mock_app.bot.send_message = AsyncMock()
+            with patch('bot.scheduler'):
+                await invite_next(event_id)
+                self.assertIn("12 ч.", mock_app.bot.send_message.call_args[0][1])
+
+        # 3. Test < 24 hours -> 1h
+        event_start_1h = get_now() + timedelta(hours=5)
+        cursor.execute("UPDATE events SET event_start_time = ? WHERE id = ?", (event_start_1h, event_id))
+        cursor.execute("UPDATE registrations SET status = 'WAITLIST' WHERE user_id = 101")
+        self.real_conn.commit()
+        
+        with patch('bot.application') as mock_app:
+            mock_app.bot.send_message = AsyncMock()
+            with patch('bot.scheduler'):
+                await invite_next(event_id)
+                self.assertIn("1 ч.", mock_app.bot.send_message.call_args[0][1])
+
+        # 4. Test < 2 hours -> STOP promotion
+        event_start_stop = get_now() + timedelta(hours=1.5)
+        cursor.execute("UPDATE events SET event_start_time = ? WHERE id = ?", (event_start_stop, event_id))
+        cursor.execute("UPDATE registrations SET status = 'WAITLIST' WHERE user_id = 101")
+        self.real_conn.commit()
+        
+        with patch('bot.application') as mock_app:
+            mock_app.bot.send_message = AsyncMock()
+            with patch('bot.scheduler'):
+                await invite_next(event_id)
+                # No message should be sent
+                mock_app.bot.send_message.assert_not_called()
+                # Status should still be WAITLIST
+                cursor.execute("SELECT status FROM registrations WHERE user_id = 101")
+                self.assertEqual(cursor.fetchone()['status'], 'WAITLIST')
 
 if __name__ == '__main__':
     unittest.main()
