@@ -219,6 +219,8 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         replace_existing=True
     )
 
+    schedule_reminders(event['id'], event_start_time)
+
     await update.message.reply_text(
         messages.REGISTRATION_OPENED.format(places=places, end_time=end_time.strftime('%H:%M:%S')),
         parse_mode='Markdown'
@@ -347,6 +349,59 @@ async def reset_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     await update.message.reply_text(messages.RESET_SUCCESS)
+
+async def send_reminder_job(event_id, days_left):
+    logging.info(f"Sending {days_left}-day reminder for event {event_id}")
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND user_id IS NOT NULL", (event_id,))
+    users = cursor.fetchall()
+    conn.close()
+    
+    msg = messages.REMINDER_5_DAYS if days_left == 5 else messages.REMINDER_2_DAYS
+    
+    for row in users:
+        try:
+            await application.bot.send_message(row['user_id'], msg)
+        except Exception as e:
+            logging.error(f"Failed to send {days_left}-day reminder to user {row['user_id']}: {e}")
+
+def schedule_reminders(event_id, event_start_time):
+    if not event_start_time:
+        return
+
+    if isinstance(event_start_time, str):
+        event_start_time = datetime.fromisoformat(event_start_time)
+    if event_start_time.tzinfo is None:
+        event_start_time = event_start_time.replace(tzinfo=ZoneInfo("UTC"))
+        
+    now = get_now()
+    
+    reminder_5_time = event_start_time - timedelta(days=5)
+    if reminder_5_time > now:
+        job_id = f"remind_5_{event_id}"
+        scheduler.add_job(
+            send_reminder_job,
+            'date',
+            run_date=reminder_5_time,
+            args=[event_id, 5],
+            id=job_id,
+            replace_existing=True
+        )
+        logging.info(f"Scheduled 5-day reminder for event {event_id} at {reminder_5_time}")
+        
+    reminder_2_time = event_start_time - timedelta(days=2)
+    if reminder_2_time > now:
+        job_id = f"remind_2_{event_id}"
+        scheduler.add_job(
+            send_reminder_job,
+            'date',
+            run_date=reminder_2_time,
+            args=[event_id, 2],
+            id=job_id,
+            replace_existing=True
+        )
+        logging.info(f"Scheduled 2-day reminder for event {event_id} at {reminder_2_time}")
 
 async def close_registration_job(event_id, chat_id):
     logging.info(f"Closing registration for event {event_id}")
@@ -1168,6 +1223,15 @@ async def post_init(app):
                 )
         except Exception as e:
             logging.error(f"Failed to resume timeout job for registration {reg['id']}: {e}")
+
+    # Reschedule reminders
+    cursor.execute("SELECT id, event_start_time FROM events WHERE status != 'CANCELLED' AND event_start_time IS NOT NULL")
+    active_events = cursor.fetchall()
+    for event in active_events:
+        try:
+            schedule_reminders(event['id'], event['event_start_time'])
+        except Exception as e:
+            logging.error(f"Failed to reschedule reminders for event {event['id']}: {e}")
             
     conn.close()
 
