@@ -230,6 +230,20 @@ TEMPLATE = """
                             {% if not waitlist %}<tr><td colspan="3">Waitlist is empty</td></tr>{% endif %}
                         </table>
                     </div>
+
+                    <h2>Unregistered ({{ unregistered|length }})</h2>
+                    <div class="table-wrap" id="unregistered-wrap">
+                        <table>
+                            <tr><th>Name</th><th>Time (Zurich)</th></tr>
+                            {% for r in unregistered %}
+                            <tr>
+                                <td>{{ r|format_name }}</td>
+                                <td>{{ r.signup_time|format_tz }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if not unregistered %}<tr><td colspan="2">No unregistered users</td></tr>{% endif %}
+                        </table>
+                    </div>
                 </div>
                 
                 <div class="col" style="flex: 2;">
@@ -272,6 +286,7 @@ def dashboard():
     registered = []
     admitted = []
     waitlist = []
+    unregistered = []
     logs = []
     
     if event:
@@ -296,6 +311,9 @@ def dashboard():
             
             cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status IN ('WAITLIST', 'INVITED') AND guest_of_user_id IS NULL ORDER BY priority ASC", (event['id'],))
             waitlist = cursor.fetchall()
+
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'UNREGISTERED' AND guest_of_user_id IS NULL ORDER BY signup_time DESC", (event['id'],))
+            unregistered = cursor.fetchall()
         
         cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC", (event['id'],))
         logs = cursor.fetchall()
@@ -309,6 +327,7 @@ def dashboard():
         registered=registered,
         admitted=admitted,
         waitlist=waitlist,
+        unregistered=unregistered,
         logs=logs
     )
 

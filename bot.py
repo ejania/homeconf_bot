@@ -840,7 +840,26 @@ async def invite_next(event_id):
     
     cursor.execute("SELECT status, event_start_time FROM events WHERE id = ?", (event_id,))
     event = cursor.fetchone()
-    if not event or event['status'] == 'REVIEW':
+    if not event:
+        conn.close()
+        return
+
+    # If in REVIEW, we promote to ACCEPTED silently
+    # They will be notified later when admin runs /send_invites
+    if event['status'] == 'REVIEW':
+        cursor.execute(
+            "SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC LIMIT 1",
+            (event_id,)
+        )
+        next_reg = cursor.fetchone()
+        if next_reg:
+            # We do NOT set notified_at here, so /send_invites picks them up
+            cursor.execute(
+                "UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", 
+                (next_reg['id'],)
+            )
+            conn.commit()
+            log_action(event_id, next_reg['user_id'], next_reg['username'], next_reg['first_name'], 'PROMOTE_REVIEW', 'Waitlist promoted silently during review')
         conn.close()
         return
         
