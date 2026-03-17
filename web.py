@@ -219,15 +219,22 @@ TEMPLATE = """
                     <h2>Waitlist ({{ waitlist|length }})</h2>
                     <div class="table-wrap" id="waitlist-wrap">
                         <table>
-                            <tr><th>Priority</th><th>Name</th><th>Status</th></tr>
+                            <tr><th>Priority</th><th>Name</th><th>Status</th><th>Expires At (CET)</th></tr>
                             {% for r in waitlist %}
                             <tr>
                                 <td>{{ r.priority }}</td>
                                 <td>{{ r|format_name }}</td>
                                 <td><span class="badge">{{ r.status }}</span></td>
+                                <td>
+                                    {% if r.status == 'INVITED' and r.expires_at %}
+                                        {{ r.expires_at|format_tz }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endfor %}
-                            {% if not waitlist %}<tr><td colspan="3">Waitlist is empty</td></tr>{% endif %}
+                            {% if not waitlist %}<tr><td colspan="4">Waitlist is empty</td></tr>{% endif %}
                         </table>
                     </div>
 

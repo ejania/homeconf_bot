@@ -68,6 +68,12 @@ async def ensure_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return False
 
 
+def reoder_waitlist(event_id, cursor):
+    cursor.execute("SELECT id FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC", (event_id,))
+    rows = cursor.fetchall()
+    for i, r in enumerate(rows, 1):
+        cursor.execute("UPDATE registrations SET priority = ? WHERE id = ?", (i, r['id']))
+
 def log_action(event_id, user_id, username, first_name, action, details=""):
     try:
         conn = get_db()
@@ -903,9 +909,10 @@ async def invite_next(event_id):
     if next_reg:
         expires_at = get_now() + timedelta(hours=timeout_hours)
         cursor.execute(
-            "UPDATE registrations SET status = 'INVITED', notified_at = ?, expires_at = ? WHERE id = ?",
+            "UPDATE registrations SET status = 'INVITED', notified_at = ?, expires_at = ?, priority = 0 WHERE id = ?",
             (get_now(), expires_at, next_reg['id'])
         )
+        reoder_waitlist(event_id, cursor)
         conn.commit()
         log_action(event_id, next_reg['user_id'], next_reg['username'], next_reg['first_name'], 'INVITE_NEXT', 'Waitlist invited')
         
@@ -974,12 +981,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         if action == "acc":
-            cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg_id,))
+            cursor.execute("UPDATE registrations SET status = 'ACCEPTED', priority = NULL WHERE id = ?", (reg_id,))
+            reoder_waitlist(reg['event_id'], cursor)
             conn.commit()
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_ACCEPT', '')
             await query.edit_message_text(messages.INVITATION_ACCEPTED)
         else:
-            cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
+            cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', priority = NULL WHERE id = ?", (reg_id,))
             conn.commit() # Commit BEFORE invite_next
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_DECLINE', '')
             await query.edit_message_text(messages.INVITATION_DECLINED)
