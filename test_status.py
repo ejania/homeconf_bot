@@ -102,6 +102,7 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
         update = MagicMock()
         update.effective_chat.type = "private"
         update.effective_user.id = 999
+        update.effective_user.username = None
         update.message.reply_text = AsyncMock()
 
         # Mock context and chat member check
