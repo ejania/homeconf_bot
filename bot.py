@@ -798,9 +798,10 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
+    username = update.effective_user.username.lower() if update.effective_user.username else ""
     cursor.execute(
-        "SELECT * FROM registrations WHERE user_id = ? AND status IN ('ACCEPTED', 'INVITED', 'WAITLIST', 'REGISTERED') ORDER BY id DESC LIMIT 1",
-        (update.effective_user.id,)
+        "SELECT * FROM registrations WHERE event_id = ? AND (user_id = ? OR (LOWER(username) = ? AND user_id IS NULL)) AND status IN ('ACCEPTED', 'INVITED', 'WAITLIST', 'REGISTERED') ORDER BY id DESC LIMIT 1",
+        (event['id'], update.effective_user.id, username)
     )
     reg = cursor.fetchone()
     
@@ -812,7 +813,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     old_status = reg['status']
     
-    if event['status'] == 'CLOSED' and old_status in ('ACCEPTED', 'INVITED'):
+    if event['status'] in ('CLOSED', 'REVIEW') and old_status in ('ACCEPTED', 'INVITED'):
         keyboard = [
             [InlineKeyboardButton("Да, я не приду", callback_data=f"uyes_{reg['id']}"),
              InlineKeyboardButton("Нет, я приду!", callback_data=f"uno_{reg['id']}")]
@@ -824,7 +825,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg['id'],))
+    cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', user_id = ? WHERE id = ?", (update.effective_user.id, reg['id']))
     conn.commit()
     log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'UNREGISTER', f'Old status: {old_status}')
     await update.message.reply_text(messages.UNREGISTERED_SUCCESS)
@@ -974,13 +975,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         if action == "acc":
             cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg_id,))
+            conn.commit()
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_ACCEPT', '')
             await query.edit_message_text(messages.INVITATION_ACCEPTED)
         else:
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
+            conn.commit() # Commit BEFORE invite_next
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_DECLINE', '')
             await query.edit_message_text(messages.INVITATION_DECLINED)
-            conn.commit() # Commit BEFORE invite_next
             await invite_next(reg['event_id'])
             
     elif action == "uyes":
@@ -989,9 +991,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             old_status = reg['status']
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
+            conn.commit() # Commit BEFORE invite_next
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'UNREGISTER', f'Confirmed unregister: {old_status}')
             await query.edit_message_text(messages.UNREGISTERED_SUCCESS)
-            conn.commit() # Commit BEFORE invite_next
             if old_status in ('ACCEPTED', 'INVITED'):
                 await invite_next(reg['event_id'])
                 
@@ -1031,9 +1033,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if cursor.fetchone():
                 is_speaker = True
 
+    username = update.effective_user.username.lower() if update.effective_user.username else ""
+    event_id = event['id'] if event else 0
     cursor.execute(
-        "SELECT r.*, e.status as event_status FROM registrations r JOIN events e ON r.event_id = e.id WHERE r.user_id = ? ORDER BY r.id DESC LIMIT 1",
-        (update.effective_user.id,)
+        "SELECT r.*, e.status as event_status FROM registrations r JOIN events e ON r.event_id = e.id WHERE e.id = ? AND (r.user_id = ? OR (LOWER(r.username) = ? AND r.user_id IS NULL)) ORDER BY r.id DESC LIMIT 1",
+        (event_id, update.effective_user.id, username)
     )
     reg = cursor.fetchone()
     
