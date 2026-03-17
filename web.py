@@ -245,7 +245,7 @@ TEMPLATE = """
                             {% for r in unregistered %}
                             <tr>
                                 <td>{{ r|format_name }}</td>
-                                <td>{{ r.signup_time|format_tz }}</td>
+                                <td>{{ r.unreg_time|format_tz if r.unreg_time else 'Unknown (Log missing)' }}</td>
                             </tr>
                             {% endfor %}
                             {% if not unregistered %}<tr><td colspan="2">No unregistered users</td></tr>{% endif %}
@@ -319,7 +319,13 @@ def dashboard():
             cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status IN ('WAITLIST', 'INVITED') AND guest_of_user_id IS NULL ORDER BY priority ASC", (event['id'],))
             waitlist = cursor.fetchall()
 
-            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'UNREGISTERED' AND guest_of_user_id IS NULL ORDER BY signup_time DESC", (event['id'],))
+            cursor.execute("""
+                SELECT r.*, 
+                       (SELECT timestamp FROM action_logs WHERE user_id = r.user_id AND event_id = r.event_id AND action IN ('UNREGISTER', 'CALLBACK_DECLINE', 'EXPIRED') ORDER BY id DESC LIMIT 1) as unreg_time
+                FROM registrations r 
+                WHERE r.event_id = ? AND r.status = 'UNREGISTERED' AND r.guest_of_user_id IS NULL 
+                ORDER BY r.signup_time DESC
+            """, (event['id'],))
             unregistered = cursor.fetchall()
         
         cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC", (event['id'],))
