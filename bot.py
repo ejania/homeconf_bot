@@ -911,11 +911,16 @@ async def invite_next(event_id):
         keyboard = [[InlineKeyboardButton("Accept", callback_data=f"acc_{next_reg['id']}"),
                      InlineKeyboardButton("Decline", callback_data=f"dec_{next_reg['id']}")]]
         
-        await application.bot.send_message(
-            next_reg['user_id'],
-            messages.SPOT_OPENED_INVITE.format(hours=timeout_hours),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        try:
+            await application.bot.send_message(
+                next_reg['user_id'],
+                messages.SPOT_OPENED_INVITE.format(hours=timeout_hours),
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as e:
+            logging.error(f"Failed to notify waitlist user {next_reg['user_id']}: {e}")
+            # Even if message fails, we keep them as INVITED for now
+            # They will eventually EXPIRE if they don't see it
         
         scheduler.add_job(
             check_timeout_job, 
@@ -975,6 +980,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_DECLINE', '')
             await query.edit_message_text(messages.INVITATION_DECLINED)
+            conn.commit() # Commit BEFORE invite_next
             await invite_next(reg['event_id'])
             
     elif action == "uyes":
@@ -985,12 +991,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'UNREGISTER', f'Confirmed unregister: {old_status}')
             await query.edit_message_text(messages.UNREGISTERED_SUCCESS)
+            conn.commit() # Commit BEFORE invite_next
             if old_status in ('ACCEPTED', 'INVITED'):
                 await invite_next(reg['event_id'])
                 
     elif action == "uno":
         await query.edit_message_text("Отлично, ждём тебя на конфе! 🎉")
             
+    # Final commit just in case (e.g. for "acc" action which doesn't call invite_next)
     conn.commit()
     conn.close()
 
