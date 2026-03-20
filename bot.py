@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from models import init_db, get_db
@@ -1194,21 +1194,34 @@ async def post_init(app):
     logging.info("Scheduler started in post_init")
 
     # Set bot commands menu
-    commands = [
+    user_commands = [
         BotCommand("start", messages.DESC_START),
         BotCommand("register", messages.DESC_REGISTER),
         BotCommand("status", messages.DESC_STATUS),
         BotCommand("unregister", messages.DESC_UNREGISTER),
         BotCommand("list", messages.DESC_LIST),
         BotCommand("invite", messages.DESC_INVITE),
+    ]
+    
+    admin_commands = user_commands + [
         BotCommand("create", messages.DESC_CREATE),
         BotCommand("open", messages.DESC_OPEN),
         BotCommand("close", messages.DESC_CLOSE),
         BotCommand("send_invites", messages.DESC_SEND_INVITES),
         BotCommand("reset", messages.DESC_RESET),
     ]
-    await app.bot.set_my_commands(commands)
-    logging.info("Bot commands menu set")
+    
+    # Default scope for everyone
+    await app.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+    
+    # Specific scope for admins
+    for admin_id in ADMIN_IDS:
+        try:
+            await app.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception as e:
+            logging.error(f"Failed to set admin commands for {admin_id}: {e}")
+            
+    logging.info("Bot commands menu set with scoping")
     
     conn = get_db()
     cursor = conn.cursor()

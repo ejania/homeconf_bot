@@ -303,7 +303,10 @@ def dashboard():
             
             cursor.execute("""
                 SELECT r.*, 
-                       (SELECT username FROM action_logs WHERE user_id = r.guest_of_user_id AND username IS NOT NULL ORDER BY id DESC LIMIT 1) as speaker_username 
+                       COALESCE(
+                           (SELECT username FROM registrations WHERE user_id = r.guest_of_user_id AND username IS NOT NULL LIMIT 1),
+                           (SELECT username FROM action_logs WHERE user_id = r.guest_of_user_id AND username IS NOT NULL ORDER BY id DESC LIMIT 1)
+                       ) as speaker_username 
                 FROM registrations r 
                 WHERE r.event_id = ? AND r.guest_of_user_id IS NOT NULL AND r.status IN ('ACCEPTED', 'INVITED', 'UNREGISTERED') 
                 ORDER BY r.id DESC
