@@ -31,6 +31,10 @@
 - [ ] **Admin Dashboard (Status)**: Add registration status, user lists, and waitlist visibility to the admin page.
 - [ ] **Invite by Phone Number**: Allow speakers to invite guests using their phone number if they don't have a Telegram username.
 - [x] **Web Interface Scroll Persistence**: Fix the issue where the dashboard scrolls to the top on every refresh, making it difficult to read long lists.
+- [ ] **Rewrite Waitlist Promotion**: Rewrite waitlist promotion logic so that people don't have to respond at night to secure their place.
+- [ ] **Waitlist Timeout Re-registration**: If a person missed their waitlist response time and the waitlist invite timed out, they should be able to register again and get added to the end of the waitlist.
+- [ ] **Auto-update Total Places**: Automatically increase the total places for the event when guests are added, so that they don't consume general registration spots.
+- [ ] **Strict Capacity Check for Waitlist**: Count the total number of everyone (guests, speakers, lottery winners, etc.) before promoting from the waitlist to ensure we never overstep the total expected capacity.
 
 ## Notes for Next Session
 - **Current State**: The bot is deployed on `104.248.28.207`. The current active flow uses `/create` -> `/open` -> `/close`.
