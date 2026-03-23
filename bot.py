@@ -945,11 +945,26 @@ async def invite_next(event_id):
     conn = get_db()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT status, event_start_time FROM events WHERE id = ?", (event_id,))
+    cursor.execute("SELECT status, event_start_time, total_places FROM events WHERE id = ?", (event_id,))
     event = cursor.fetchone()
     if not event:
         conn.close()
         return
+
+    # --- Strict Capacity Check ---
+    cursor.execute("SELECT COUNT(*) as count FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED')", (event_id,))
+    occupied_count = cursor.fetchone()['count']
+    
+    cursor.execute("SELECT COUNT(*) as count FROM speakers WHERE event_id = ?", (event_id,))
+    speakers_count = cursor.fetchone()['count']
+    
+    total_occupied = occupied_count + speakers_count
+    
+    if event['total_places'] is not None and total_occupied >= event['total_places']:
+        logging.info(f"Strict Capacity Check: Event {event_id} is full (Total: {event['total_places']}, Occupied: {total_occupied}). Stopping waitlist promotion.")
+        conn.close()
+        return
+    # -----------------------------
 
     # If in REVIEW, we promote to ACCEPTED silently
     # They will be notified later when admin runs /send_invites
