@@ -808,6 +808,10 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if existing_reg['status'] in ['REGISTERED', 'WAITLIST']:
             if invite_to_delete_id:
                 cursor.execute("DELETE FROM registrations WHERE id = ?", (invite_to_delete_id,))
+            else:
+                # Upgrading from general pool, increase total_places so they don't consume a general spot
+                cursor.execute("UPDATE events SET total_places = total_places + 1 WHERE id = ?", (event['id'],))
+                
             cursor.execute(
                 "UPDATE registrations SET status = 'ACCEPTED', guest_of_user_id = ? WHERE id = ?",
                 (update.effective_user.id, existing_reg['id'])
@@ -831,6 +835,10 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         if invite_to_delete_id:
             cursor.execute("DELETE FROM registrations WHERE id = ?", (invite_to_delete_id,))
+        else:
+            # Completely new guest, increase total_places so they don't consume a general spot
+            cursor.execute("UPDATE events SET total_places = total_places + 1 WHERE id = ?", (event['id'],))
+            
         # Create new registration for guest
         invite_token = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
         cursor.execute(
