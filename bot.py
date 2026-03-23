@@ -637,7 +637,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     cursor.execute(
-        "SELECT * FROM registrations WHERE event_id = ? AND user_id = ? AND status != 'UNREGISTERED'",
+        "SELECT * FROM registrations WHERE event_id = ? AND user_id = ? AND status != 'UNREGISTERED' AND status != 'EXPIRED'",
         (event['id'], update.effective_user.id)
     )
     existing_reg = cursor.fetchone()
