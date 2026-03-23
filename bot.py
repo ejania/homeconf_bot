@@ -43,6 +43,40 @@ TZ = ZoneInfo("Europe/Berlin")
 def get_now():
     return datetime.now(TZ)
 
+def calculate_expiration_with_night_pause(now_utc: datetime, timeout_hours: int) -> datetime:
+    # Only pause during the night if the timeout is short (e.g. 1h or similar).
+    # If the timeout is 12h or 24h, there's naturally plenty of daytime included, so no need to pause.
+    if timeout_hours >= 12:
+        return now_utc + timedelta(hours=timeout_hours)
+
+    tz = ZoneInfo("Europe/Zurich")
+    now_local = now_utc.astimezone(tz)
+    
+    # We allocate time chunk by chunk
+    remaining_hours = timeout_hours
+    current = now_local
+    
+    while remaining_hours > 0:
+        # Check if current time is inside night window (00:00 to 10:00)
+        # Night ends at 10:00 today. If current is < 10:00, move it to 10:00.
+        if 0 <= current.hour < 10:
+            current = current.replace(hour=10, minute=0, second=0, microsecond=0)
+        
+        # Next night starts at 00:00 tomorrow
+        next_night_start = (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Available hours until next night
+        available_hours = (next_night_start - current).total_seconds() / 3600.0
+        
+        if remaining_hours <= available_hours:
+            current += timedelta(hours=remaining_hours)
+            remaining_hours = 0
+        else:
+            current = next_night_start
+            remaining_hours -= available_hours
+            
+    return current.astimezone(ZoneInfo("UTC"))
+
 # Global scheduler and application
 scheduler = None
 application = None
@@ -965,7 +999,7 @@ async def invite_next(event_id):
     next_reg = cursor.fetchone()
     
     if next_reg:
-        expires_at = get_now() + timedelta(hours=timeout_hours)
+        expires_at = calculate_expiration_with_night_pause(get_now(), timeout_hours)
         cursor.execute(
             "UPDATE registrations SET status = 'INVITED', notified_at = ?, expires_at = ?, priority = 0 WHERE id = ?",
             (get_now(), expires_at, next_reg['id'])
