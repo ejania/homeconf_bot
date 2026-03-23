@@ -29,7 +29,7 @@
 - [x] **Lottery Review Step**: Introduced a `REVIEW` state after the lottery runs. Admin can check results via `/list` or web dashboard before sending actual invites with `/send_invites`.
 - [x] **Admin Dashboard (Logs)**: Create a simple web-based admin page to watch logs from the latest registration in real time.
 - [x] **Admin Dashboard (Status)**: Add registration status, user lists, and waitlist visibility to the admin page.
-- [ ] **Invite by Phone Number**: Allow speakers to invite guests using their phone number if they don't have a Telegram username.
+- [x] **Invite by Phone Number**: Allow speakers to invite guests using their phone number if they don't have a Telegram username.
 - [x] **Web Interface Scroll Persistence**: Fix the issue where the dashboard scrolls to the top on every refresh, making it difficult to read long lists.
 - [ ] **Rewrite Waitlist Promotion**: Rewrite waitlist promotion logic so that people don't have to respond at night to secure their place.
 - [ ] **Waitlist Timeout Re-registration**: If a person missed their waitlist response time and the waitlist invite timed out, they should be able to register again and get added to the end of the waitlist.

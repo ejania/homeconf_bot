@@ -68,6 +68,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
             notified_at DATETIME,
             expires_at DATETIME,
             guest_of_user_id INTEGER,
+            invite_token TEXT,
             FOREIGN KEY (event_id) REFERENCES events (id)
         )
     ''')
@@ -270,7 +271,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reg['user_id'], 777)
         self.assertEqual(reg['chat_id'], 1000)
         
-        update.message.reply_text.assert_called_with(messages.GUEST_IDENTIFIED)
+        update.message.reply_text.assert_called_with(f"{messages.GUEST_IDENTIFIED}\n\n{messages.WELCOME_MESSAGE}")
 
     async def test_lottery_respects_guests(self):
         cursor = self.real_conn.cursor()

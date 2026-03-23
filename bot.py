@@ -2,6 +2,9 @@ import logging
 import random
 import os
 import asyncio
+import secrets
+import string
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -45,6 +48,38 @@ scheduler = None
 application = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        token = context.args[0]
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM registrations WHERE invite_token = ?", (token,))
+        invite = cursor.fetchone()
+        if invite:
+            if invite['user_id']:
+                if invite['user_id'] == update.effective_user.id:
+                    await update.message.reply_text(messages.GUEST_LINK_ALREADY)
+                else:
+                    await update.message.reply_text(messages.GUEST_LINK_USED)
+            else:
+                # check if user is already registered in this event
+                cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND user_id = ? AND status != 'UNREGISTERED'", (invite['event_id'], update.effective_user.id))
+                existing = cursor.fetchone()
+                if existing:
+                    if existing['status'] in ['REGISTERED', 'WAITLIST']:
+                        cursor.execute("DELETE FROM registrations WHERE id = ?", (invite['id'],))
+                        cursor.execute("UPDATE registrations SET status = 'ACCEPTED', guest_of_user_id = ? WHERE id = ?", (invite['guest_of_user_id'], existing['id']))
+                        await update.message.reply_text(f"{messages.GUEST_IDENTIFIED}\n\n{messages.WELCOME_MESSAGE}")
+                    else:
+                        await update.message.reply_text(messages.ALREADY_REGISTERED)
+                else:
+                    cursor.execute("UPDATE registrations SET user_id = ?, chat_id = ?, first_name = ?, username = ?, signup_time = ? WHERE id = ?", 
+                                   (update.effective_user.id, update.effective_chat.id, update.effective_user.first_name, update.effective_user.username, get_now(), invite['id']))
+                    await update.message.reply_text(f"{messages.GUEST_IDENTIFIED}\n\n{messages.WELCOME_MESSAGE}")
+            conn.commit()
+            conn.close()
+            return
+        conn.close()
+
     await update.message.reply_text(messages.WELCOME_MESSAGE)
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -563,7 +598,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             conn.commit()
             log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'REGISTER_GUEST', 'Claimed guest spot')
-            await update.message.reply_text(messages.GUEST_IDENTIFIED)
+            await update.message.reply_text(f"{messages.GUEST_IDENTIFIED}\n\n{messages.WELCOME_MESSAGE}")
             conn.close()
             return
 
@@ -676,7 +711,18 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    guest_username = context.args[0].replace('<', '').replace('>', '').lstrip('@')
+    guest_input = ' '.join(context.args).replace('<', '').replace('>', '').lstrip('@')
+    is_tg_username = bool(re.match(r'^[a-zA-Z0-9_]{5,32}$', guest_input)) and not guest_input.isdigit()
+    
+    cleaned_phone = re.sub(r'[\s\-\(\)]', '', guest_input)
+    is_phone = bool(re.match(r'^\+?\d{7,15}$', cleaned_phone))
+
+    if not is_tg_username and not is_phone:
+        await update.message.reply_text(messages.INVALID_INVITE_FORMAT)
+        conn.close()
+        return
+
+    guest_username = cleaned_phone if is_phone else guest_input
 
     # Check if speaker tries to invite themselves
     if update.effective_user.username and guest_username.lower() == update.effective_user.username.lower():
@@ -752,12 +798,20 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if invite_to_delete_id:
             cursor.execute("DELETE FROM registrations WHERE id = ?", (invite_to_delete_id,))
         # Create new registration for guest
+        invite_token = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
         cursor.execute(
-            "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?)",
-            (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, get_now())
+            "INSERT INTO registrations (event_id, username, status, guest_of_user_id, signup_time, invite_token) VALUES (?, ?, ?, ?, ?, ?)",
+            (event['id'], guest_username, 'ACCEPTED', update.effective_user.id, get_now(), invite_token)
         )
         log_details = f'Guest: {guest_username}'
-        await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_NEW.format(username=guest_username))
+        
+        # Decide which message to show based on whether it was a phone number
+        if is_phone:
+            bot_username = context.bot.username
+            link = f"https://t.me/{bot_username}?start={invite_token}"
+            await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_LINK.format(link=link))
+        else:
+            await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_NEW.format(username=guest_username))
  
     conn.commit()
     conn.close()
@@ -842,6 +896,10 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 async def invite_next(event_id):
+    if str(event_id) == '26':
+        logging.info("Waitlist promotion stopped for event 26.")
+        return
+
     conn = get_db()
     cursor = conn.cursor()
     
