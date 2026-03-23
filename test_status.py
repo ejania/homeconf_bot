@@ -63,6 +63,7 @@ class TestStatus(unittest.IsolatedAsyncioTestCase):
                 notified_at DATETIME,
                 expires_at DATETIME,
                 guest_of_user_id INTEGER,
+                invite_token TEXT,
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         ''')

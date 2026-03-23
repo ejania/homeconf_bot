@@ -35,7 +35,8 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
             id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, user_id INTEGER, 
             chat_id INTEGER, username TEXT, first_name TEXT, status TEXT, 
             signup_time DATETIME, priority INTEGER, notified_at DATETIME, 
-            expires_at DATETIME, guest_of_user_id INTEGER)''')
+            expires_at DATETIME, guest_of_user_id INTEGER,
+                invite_token TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS speakers (
             id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, username TEXT)''')
         cursor.execute("""
