@@ -41,6 +41,7 @@ class TestPreOpen(unittest.IsolatedAsyncioTestCase):
                 waitlist_timeout_hours INTEGER,
                 end_time DATETIME,
                 event_start_time DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 registration_duration_hours INTEGER
             )
         ''')

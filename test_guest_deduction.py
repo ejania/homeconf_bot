@@ -37,6 +37,7 @@ class TestGuestDeduction(unittest.IsolatedAsyncioTestCase):
                 chat_id INTEGER,
                 status TEXT,
                 total_places INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
                 end_time DATETIME,

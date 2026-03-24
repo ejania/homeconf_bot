@@ -29,7 +29,8 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         cursor = self.real_conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, status TEXT, 
-            total_places INTEGER, speakers_group_id TEXT, waitlist_timeout_hours INTEGER, 
+            total_places INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP, speakers_group_id TEXT, waitlist_timeout_hours INTEGER, 
             end_time DATETIME, registration_duration_hours INTEGER)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS registrations (
             id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER, user_id INTEGER, 

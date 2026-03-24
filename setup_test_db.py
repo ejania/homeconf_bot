@@ -11,6 +11,7 @@ cursor.execute("""
     CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         status TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         total_places INTEGER
     )
 """)
