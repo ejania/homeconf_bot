@@ -20,13 +20,13 @@ class TestWebDashboard(unittest.TestCase):
         self.mock_get_db.return_value = self.conn
         
         cursor = self.conn.cursor()
-        cursor.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, status TEXT, total_places INTEGER)")
+        cursor.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, status TEXT, total_places INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
         cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, first_name TEXT)")
         cursor.execute("CREATE TABLE registrations (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, status TEXT, guest_of_user_id INTEGER, signup_time DATETIME, priority INTEGER)")
         cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, timestamp DATETIME, username TEXT, first_name TEXT, user_id INTEGER, action TEXT, details TEXT)")
         
         # Insert test data
-        cursor.execute("INSERT INTO events (status, total_places) VALUES ('OPEN', 10)")
+        cursor.execute("INSERT INTO events (status, total_places, created_at) VALUES ('OPEN', 10, CURRENT_TIMESTAMP)")
         event_id = cursor.lastrowid
         
         # Insert > 150 logs to verify pagination removal
@@ -67,7 +67,7 @@ class TestWebDashboard(unittest.TestCase):
         self.assertIn("window.scrollTo(0, parseInt(scrollPos))", html)
         self.assertIn('body onload="restoreScroll()"', html)
 
-    def test_dashboard_shows_all_logs(self):
+    def test_dashboard_shows_recent_logs(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
         html = response.data.decode()
@@ -76,12 +76,12 @@ class TestWebDashboard(unittest.TestCase):
         self.assertIn("<h2>Real-time Action Logs (Zurich)</h2>", html)
         self.assertNotIn("(Latest 150)", html)
         
-        # Check that we see logs beyond 150
-        self.assertIn("ACTION_0", html)
+        # Check that we do NOT see log 0, but DO see log 199 (due to LIMIT 100)
+        self.assertNotIn("ACTION_0", html)
         self.assertIn("ACTION_199", html)
         
-        # Simple count check - "ACTION_" appears 200 times in the logs
-        self.assertEqual(html.count("ACTION_"), 200)
+        # Simple count check - "ACTION_" appears 100 times in the logs
+        self.assertEqual(html.count("ACTION_"), 100)
 
     def test_dashboard_cancelled_hides_participants(self):
         # Update event to CANCELLED
@@ -103,7 +103,7 @@ class TestWebDashboard(unittest.TestCase):
         self.assertNotIn("@test_user", html)
         # Should STILL show logs
         self.assertIn("Real-time Action Logs (Zurich)", html)
-        self.assertEqual(html.count("ACTION_"), 200)
+        self.assertEqual(html.count("ACTION_"), 100)
 
     def test_timestamp_formatting_zurich(self):
         cursor = self.conn.cursor()

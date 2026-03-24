@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,74 +9,50 @@ DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 
 def format_tz(ts):
     if not ts:
-        return ""
-    target_tz = ZoneInfo("Europe/Berlin")
-    if isinstance(ts, str):
-        try:
-            # fromisoformat handles 'YYYY-MM-DD HH:MM:SS.mmmmmm+HH:MM' or 'YYYY-MM-DD HH:MM:SS'
+        return "N/A"
+    try:
+        if isinstance(ts, str):
             dt = datetime.fromisoformat(ts)
-            if dt.tzinfo is None:
-                # Naive timestamps from SQLite are assumed to be UTC
-                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-        except ValueError:
-            try:
-                dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-            except ValueError:
-                return ts
-    elif isinstance(ts, datetime):
-        dt = ts
+        else:
+            dt = ts
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-    else:
+        return dt.astimezone(ZoneInfo("Europe/Zurich")).strftime('%Y-%m-%d %H:%M:%S')
+    except:
         return ts
-    
-    return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M:%S")
-
-def format_name(user):
-    # user is a sqlite3.Row, it doesn't have .get() but can be converted or accessed by index/name
-    try:
-        username = user['username']
-    except (IndexError, KeyError, TypeError):
-        username = None
-
-    try:
-        first_name = user['first_name']
-    except (IndexError, KeyError, TypeError):
-        first_name = None
-
-    if username and not str(username).isdigit():
-        return f"@{username}"
-    if first_name:
-        return first_name
-    if username: # This would be the ID if it was a speaker without username
-        return f"ID: {username}"
-    return "Unknown"
-
-app.jinja_env.filters['format_tz'] = format_tz
-app.jinja_env.filters['format_name'] = format_name
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
+def format_name(user):
+    if user.get('username'):
+        return f"@{user['username']}"
+    return f"{user.get('first_name', 'Unknown')} ({user.get('user_id', 'N/A')})"
+
+app.jinja_env.filters['format_tz'] = format_tz
+app.jinja_env.filters['format_name'] = format_name
+
 TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Homeconf Admin</title>
+    <title>Homeconf Admin Dashboard</title>
     <style>
-        body { font-family: sans-serif; margin: 2rem; background: #f4f4f4; color: #333; }
-        .container { max-width: 1400px; margin: auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1 { color: #222; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        h2 { color: #444; margin-top: 1.5rem; font-size: 1.2rem; background: #fafafa; padding: 8px; border-left: 4px solid #007bff; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; font-size: 0.9em; }
-        th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
-        th { background: #eee; position: sticky; top: 0; }
-        .row { display: flex; gap: 2rem; align-items: flex-start; }
-        .col { flex: 1; }
-        .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; background: #ddd; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 2rem; background: #f4f7f6; }
+        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; }
+        h2 { color: #34495e; margin-top: 2rem; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .stat-card { background: #f8f9fa; padding: 1rem; border-radius: 6px; border-left: 4px solid #3498db; }
+        .stat-card h3 { margin: 0; font-size: 0.9rem; text-transform: uppercase; color: #7f8c8d; }
+        .stat-card p { margin: 0.5rem 0 0; font-size: 1.5rem; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; }
+        tr:hover { background: #fcfcfc; }
+        .status-badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
         .status-open { background: #d4edda; color: #155724; }
         .status-review { background: #fff3cd; color: #856404; }
         .status-closed { background: #f8d7da; color: #721c24; }
@@ -84,6 +60,8 @@ TEMPLATE = """
         .status-cancelled { background: #e2e3e5; color: #383d41; }
         .table-wrap { max-height: 400px; overflow-y: auto; margin-bottom: 2rem; border-bottom: 1px solid #ddd; }
         .log-wrap { max-height: 800px; overflow-y: auto; }
+        .test-link { display: inline-block; margin-top: 1rem; padding: 0.5rem 1rem; background: #e2e3e5; color: #383d41; text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
+        .test-link:hover { background: #d6d8db; }
     </style>
     <script>
         function reloadData() {
@@ -128,7 +106,17 @@ TEMPLATE = """
 </head>
 <body onload="restoreScroll()">
     <div class="container">
-        <h1>Admin Dashboard</h1>
+        <h1>Admin Dashboard {{ '(TEST EVENT)' if event and event.id < 0 else '' }}</h1>
+        
+        <div style="margin-bottom: 1rem;">
+            {% if latest_test and (not event or event.id != latest_test.id) %}
+                <a href="/?event_id={{ latest_test.id }}" class="test-link">Switch to Latest Test Event (ID: {{ latest_test.id }})</a>
+            {% endif %}
+            {% if event and event.id < 0 %}
+                <a href="/" class="test-link">Back to Real Event</a>
+            {% endif %}
+        </div>
+
         <h2>Current Event Status</h2>
         {% if not event or event.status == 'CANCELLED' %}
             <p>No active event found.</p>
@@ -153,102 +141,117 @@ TEMPLATE = """
                 </div>
             {% endif %}
         {% else %}
-            <p style="font-size: 1.1em;">
-                <strong>Event ID:</strong> {{ event.id }} &nbsp;|&nbsp; 
-                <strong>Status:</strong> <span class="badge status-{{ event.status|lower }}">{{ event.status }}</span> &nbsp;|&nbsp; 
-                <strong>Total Places:</strong> {{ event.total_places }}
-            </p>
-            
-            <div class="row">
-                <div class="col" style="flex: 2;">
-                    
-                    <h2>Speakers ({{ speakers|length }})</h2>
-                    <div class="table-wrap" id="speakers-wrap" style="max-height: 200px;">
+            <div class="stats">
+                <div class="stat-card">
+                    <h3>Event ID</h3>
+                    <p>#{{ event.id }}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Status</h3>
+                    <p><span class="status-badge status-{{ event.status|lower }}">{{ event.status }}</span></p>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Places</h3>
+                    <p>{{ event.total_places or 'N/A' }}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Remaining Waitlist</h3>
+                    <p>{{ waitlist|length }}</p>
+                </div>
+            </div>
+
+            <div class="row" style="display: flex; gap: 2rem; flex-wrap: wrap;">
+                <div class="col" style="flex: 3; min-width: 600px;">
+                    <h2>Speakers</h2>
+                    <div class="table-wrap" id="speakers-wrap">
                         <table>
-                            <tr><th>Name</th></tr>
+                            <tr><th>Name</th><th>Username</th></tr>
                             {% for s in speakers %}
-                            <tr><td>{{ s|format_name }}</td></tr>
+                            <tr>
+                                <td>{{ s['first_name'] or 'N/A' }}</td>
+                                <td>@{{ s['username'] }}</td>
+                            </tr>
                             {% endfor %}
-                            {% if not speakers %}<tr><td>No manual speakers added (may be using Telegram Group)</td></tr>{% endif %}
+                            {% if not speakers %}<tr><td colspan="2">No speakers</td></tr>{% endif %}
                         </table>
                     </div>
 
-                    <h2>Speakers' guests ({{ invitees|length }})</h2>
+                    <h2>Guests (Invitees)</h2>
                     <div class="table-wrap" id="invitees-wrap">
                         <table>
-                            <tr><th>Name</th><th>Status</th><th>Invited By</th></tr>
+                            <tr><th>Name</th><th>Username</th><th>Invited By</th><th>Time</th></tr>
                             {% for r in invitees %}
                             <tr>
-                                <td>{{ r|format_name }}</td>
-                                <td><span class="badge">{{ r.status }}</span></td>
-                                <td>{{ r.speaker_username or r.guest_of_user_id }}</td>
+                                <td>{{ r['first_name'] or 'N/A' }}</td>
+                                <td>{{ r['username'] or 'N/A' }}</td>
+                                <td>@{{ r['speaker_username'] or 'ID:' ~ r['guest_of_user_id'] }}</td>
+                                <td>{{ r['signup_time'] }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not invitees %}<tr><td colspan="3">No invitees yet</td></tr>{% endif %}
+                            {% if not invitees %}<tr><td colspan="4">No guest invitations</td></tr>{% endif %}
                         </table>
                     </div>
 
-                    <h2>Admitted (Lottery Winners) ({{ admitted|length }})</h2>
+                    <h2>Admitted (Lottery Winners)</h2>
                     <div class="table-wrap" id="admitted-wrap">
                         <table>
-                            <tr><th>Name</th><th>Time (Zurich)</th></tr>
+                            <tr><th>Name</th><th>Username</th><th>Status</th><th>Time</th></tr>
                             {% for r in admitted %}
                             <tr>
-                                <td>{{ r|format_name }}</td>
-                                <td>{{ r.signup_time|format_tz }}</td>
+                                <td>{{ r['first_name'] or 'N/A' }}</td>
+                                <td>@{{ r['username'] or 'N/A' }}</td>
+                                <td>{{ r['status'] }}</td>
+                                <td>{{ r['signup_time'] }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not admitted %}<tr><td colspan="2">No admitted users</td></tr>{% endif %}
+                            {% if not admitted %}<tr><td colspan="4">No winners yet</td></tr>{% endif %}
                         </table>
                     </div>
 
-                    <h2>Registered (Lottery Pool) ({{ registered|length }})</h2>
+                    <h2>Registered (Pool)</h2>
                     <div class="table-wrap" id="registered-wrap">
                         <table>
-                            <tr><th>Name</th><th>Time (Zurich)</th></tr>
+                            <tr><th>Name</th><th>Username</th><th>Time</th></tr>
                             {% for r in registered %}
                             <tr>
-                                <td>{{ r|format_name }}</td>
-                                <td>{{ r.signup_time|format_tz }}</td>
+                                <td>{{ r['first_name'] or 'N/A' }}</td>
+                                <td>@{{ r['username'] or 'N/A' }}</td>
+                                <td>{{ r['signup_time']|format_tz }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not registered %}<tr><td colspan="2">No users in pool</td></tr>{% endif %}
+                            {% if not registered %}<tr><td colspan="3">No registrations</td></tr>{% endif %}
                         </table>
                     </div>
 
-                    <h2>Waitlist ({{ waitlist|length }})</h2>
+                    <h2>Waitlist</h2>
                     <div class="table-wrap" id="waitlist-wrap">
                         <table>
-                            <tr><th>Priority</th><th>Name</th><th>Status</th><th>Expires At (CET)</th></tr>
+                            <tr><th>#</th><th>Name</th><th>Username</th><th>Time</th></tr>
                             {% for r in waitlist %}
                             <tr>
-                                <td>{{ r.priority }}</td>
-                                <td>{{ r|format_name }}</td>
-                                <td><span class="badge">{{ r.status }}</span></td>
-                                <td>
-                                    {% if r.status == 'INVITED' and r.expires_at %}
-                                        {{ r.expires_at|format_tz }}
-                                    {% else %}
-                                        -
-                                    {% endif %}
-                                </td>
+                                <td>{{ r['priority'] }}</td>
+                                <td>{{ r['first_name'] or 'N/A' }}</td>
+                                <td>@{{ r['username'] or 'N/A' }}</td>
+                                <td>{{ r['signup_time'] }}</td>
                             </tr>
                             {% endfor %}
                             {% if not waitlist %}<tr><td colspan="4">Waitlist is empty</td></tr>{% endif %}
                         </table>
                     </div>
 
-                    <h2>Unregistered ({{ unregistered|length }})</h2>
+                    <h2>Unregistered / Expired</h2>
                     <div class="table-wrap" id="unregistered-wrap">
                         <table>
-                            <tr><th>Name</th><th>Time (Zurich)</th></tr>
+                            <tr><th>Name</th><th>Username</th><th>Status</th><th>Unreg Time</th></tr>
                             {% for r in unregistered %}
                             <tr>
-                                <td>{{ r|format_name }}</td>
-                                <td>{{ r.unreg_time|format_tz if r.unreg_time else 'Unknown (Log missing)' }}</td>
+                                <td>{{ r['first_name'] or 'N/A' }}</td>
+                                <td>{{ r['username'] or 'N/A' }}</td>
+                                <td>{{ r['status'] }}</td>
+                                <td>{{ r['unreg_time']|format_tz }}</td>
                             </tr>
                             {% endfor %}
-                            {% if not unregistered %}<tr><td colspan="2">No unregistered users</td></tr>{% endif %}
+                            {% if not unregistered %}<tr><td colspan="4">No unregistered users</td></tr>{% endif %}
                         </table>
                     </div>
                 </div>
@@ -285,8 +288,24 @@ def dashboard():
     if cursor.fetchone()[0] == 0:
         return render_template_string(TEMPLATE, event=None)
 
-    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
-    event = cursor.fetchone()
+    # Get requested event_id from query param
+    event_id_param = request.args.get('event_id')
+    
+    if event_id_param:
+        cursor.execute("SELECT * FROM events WHERE id = ?", (event_id_param,))
+        event = cursor.fetchone()
+    else:
+        # Default: Latest REAL event
+        cursor.execute("SELECT * FROM events WHERE id > 0 ORDER BY created_at DESC LIMIT 1")
+        event = cursor.fetchone()
+        if not event:
+            # If no real events, maybe show latest test event
+            cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
+            event = cursor.fetchone()
+
+    # Get latest test event for linking
+    cursor.execute("SELECT * FROM events WHERE id < 0 ORDER BY created_at DESC LIMIT 1")
+    latest_test = cursor.fetchone()
     
     speakers = []
     invitees = []
@@ -308,36 +327,41 @@ def dashboard():
                            (SELECT username FROM action_logs WHERE user_id = r.guest_of_user_id AND username IS NOT NULL ORDER BY id DESC LIMIT 1)
                        ) as speaker_username 
                 FROM registrations r 
-                WHERE r.event_id = ? AND r.guest_of_user_id IS NOT NULL AND r.status IN ('ACCEPTED', 'INVITED', 'UNREGISTERED') 
-                ORDER BY r.id DESC
+                WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND guest_of_user_id IS NOT NULL 
+                ORDER BY signup_time ASC
             """, (event['id'],))
             invitees = cursor.fetchall()
             
-            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'REGISTERED' ORDER BY signup_time ASC", (event['id'],))
-            registered = cursor.fetchall()
-
             cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'ACCEPTED' AND guest_of_user_id IS NULL ORDER BY signup_time ASC", (event['id'],))
             admitted = cursor.fetchall()
             
-            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status IN ('WAITLIST', 'INVITED') AND guest_of_user_id IS NULL ORDER BY priority ASC", (event['id'],))
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'REGISTERED' ORDER BY signup_time ASC", (event['id'],))
+            registered = cursor.fetchall()
+            
+            cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC", (event['id'],))
             waitlist = cursor.fetchall()
-
+            
             cursor.execute("""
-                SELECT r.*, 
+                SELECT r.*,
                        (SELECT timestamp FROM action_logs WHERE user_id = r.user_id AND event_id = r.event_id AND action IN ('UNREGISTER', 'CALLBACK_DECLINE', 'EXPIRED') ORDER BY id DESC LIMIT 1) as unreg_time
                 FROM registrations r 
-                WHERE r.event_id = ? AND r.status = 'UNREGISTERED' AND r.guest_of_user_id IS NULL 
-                ORDER BY r.signup_time DESC
+                WHERE event_id = ? AND status IN ('UNREGISTERED', 'EXPIRED') 
+                ORDER BY unreg_time DESC
             """, (event['id'],))
             unregistered = cursor.fetchall()
-        
-        cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC", (event['id'],))
+            
+        cursor.execute("SELECT * FROM action_logs WHERE event_id = ? ORDER BY id DESC LIMIT 100", (event['id'],))
         logs = cursor.fetchall()
-        
+    else:
+        # If no event, maybe show global logs
+        cursor.execute("SELECT * FROM action_logs ORDER BY id DESC LIMIT 100")
+        logs = cursor.fetchall()
+
     conn.close()
     return render_template_string(
         TEMPLATE, 
         event=event, 
+        latest_test=latest_test,
         speakers=speakers,
         invitees=invitees,
         registered=registered,

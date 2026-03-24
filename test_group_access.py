@@ -36,6 +36,7 @@ class TestGroupAccess(unittest.IsolatedAsyncioTestCase):
                 chat_id INTEGER,
                 status TEXT,
                 total_places INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
                 end_time DATETIME,
@@ -110,8 +111,12 @@ class TestGroupAccess(unittest.IsolatedAsyncioTestCase):
                 await create_event(update, context)
             
             # Verify success message was sent at some point
-            # Since multiple messages are sent, use assert_any_call or check call_args_list
-            update.message.reply_text.assert_any_call(messages.EVENT_CREATED)
+            found_msg = False
+            for call in update.message.reply_text.call_args_list:
+                if "Событие создано!" in call[0][0]:
+                    found_msg = True
+                    break
+            self.assertTrue(found_msg)
             
             # Verify event created
             cursor = self.real_conn.cursor()

@@ -161,16 +161,25 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
         return
 
+    is_test = False
+    args = list(context.args)
+    if args and args[0].lower() == 'test':
+        is_test = True
+        args = args[1:]
+
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM events WHERE status IN ('OPEN', 'PRE_OPEN')")
-    if cursor.fetchone():
-        await update.message.reply_text(messages.REGISTRATION_ALREADY_OPEN)
-        conn.close()
-        return
-
+    
+    # Check if a real event is already active. Test events don't block each other.
+    if not is_test:
+        cursor.execute("SELECT id FROM events WHERE id > 0 AND status IN ('OPEN', 'PRE_OPEN')")
+        if cursor.fetchone():
+            await update.message.reply_text(messages.REGISTRATION_ALREADY_OPEN)
+            conn.close()
+            return
+    
     try:
-        speakers_group_id = context.args[0]
+        speakers_group_id = args[0]
         try:
             speakers_group_id = int(speakers_group_id)
         except ValueError:
@@ -187,7 +196,6 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         actual_group_id = chat.id
     except Exception as e:
         # Fallback: Telegram clients often strip the -100 prefix for supergroups.
-        # Let's try adding it if it's a negative integer not starting with -100.
         if isinstance(speakers_group_id, int) and speakers_group_id < 0 and not str(speakers_group_id).startswith("-100"):
             try:
                 speakers_group_id = int(f"-100{abs(speakers_group_id)}")
@@ -205,16 +213,38 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             return
 
-    cursor.execute(
-        "INSERT INTO events (chat_id, status, speakers_group_id) VALUES (?, ?, ?)",
-        (update.effective_chat.id, 'PRE_OPEN', str(actual_group_id))
-    )
+    if not is_test:
+        # Clean up all test events and their related data
+        cursor.execute("SELECT id FROM events WHERE id < 0")
+        test_event_ids = [row['id'] for row in cursor.fetchall()]
+        for te_id in test_event_ids:
+            cursor.execute("DELETE FROM registrations WHERE event_id = ?", (te_id,))
+            cursor.execute("DELETE FROM speakers WHERE event_id = ?", (te_id,))
+            cursor.execute("DELETE FROM action_logs WHERE event_id = ?", (te_id,))
+            cursor.execute("DELETE FROM events WHERE id = ?", (te_id,))
+        
+        cursor.execute(
+            "INSERT INTO events (chat_id, status, speakers_group_id) VALUES (?, ?, ?)",
+            (update.effective_chat.id, 'PRE_OPEN', str(actual_group_id))
+        )
+        event_id = cursor.lastrowid
+    else:
+        # Find next negative ID
+        cursor.execute("SELECT MIN(id) as min_id FROM events WHERE id < 0")
+        row = cursor.fetchone()
+        next_test_id = (row['min_id'] - 1) if (row and row['min_id'] is not None) else -1
+        
+        cursor.execute(
+            "INSERT INTO events (id, chat_id, status, speakers_group_id) VALUES (?, ?, ?, ?)",
+            (next_test_id, update.effective_chat.id, 'PRE_OPEN', str(actual_group_id))
+        )
+        event_id = next_test_id
+
     conn.commit()
-    event_id = cursor.lastrowid
-    log_action(event_id, update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CREATE_EVENT', f'group={actual_group_id}')
+    log_action(event_id, update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CREATE_EVENT', f'group={actual_group_id}{" (TEST)" if is_test else ""}')
     conn.close()
 
-    await update.message.reply_text(messages.EVENT_CREATED)
+    await update.message.reply_text(f"Событие создано! (ID: {event_id}) {'[ТЕСТ]' if is_test else ''}")
     
     # Run userbot script to import speakers
     # We do this asynchronously so we don't block the bot
@@ -251,7 +281,7 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM events WHERE status = 'PRE_OPEN' ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT * FROM events WHERE status = 'PRE_OPEN' ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event:
@@ -308,7 +338,7 @@ async def close_registration_command(update: Update, context: ContextTypes.DEFAU
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, chat_id FROM events WHERE status = 'OPEN' ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT id, chat_id FROM events WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event:
@@ -332,7 +362,7 @@ async def send_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, total_places FROM events WHERE status = 'REVIEW' ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT id, total_places FROM events WHERE status = 'REVIEW' ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event:
@@ -399,7 +429,7 @@ async def reset_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM events ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT id FROM events ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event:
@@ -586,7 +616,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event or event['status'] == 'CANCELLED':
@@ -702,7 +732,7 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event or event['status'] == 'CANCELLED':
@@ -868,7 +898,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
 
     if not event or event['status'] == 'CANCELLED':
@@ -1136,7 +1166,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if user is a speaker first
     is_speaker = False
-    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if event and event['status'] != 'CANCELLED':
@@ -1199,7 +1229,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
     event = cursor.fetchone()
     
     if not event:
