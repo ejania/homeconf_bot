@@ -37,6 +37,7 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
                 chat_id INTEGER,
                 status TEXT,
                 total_places INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 speakers_group_id TEXT,
                 waitlist_timeout_hours INTEGER,
                 end_time DATETIME,
@@ -157,7 +158,7 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(invite_calls), 2)
         for call in invite_calls:
             self.assertIn("Освободилось место!", call[0][1])
-            self.assertIn("24 ч.", call[0][1]) # Default timeout
+            self.assertIn("24 ч", call[0][1]) # Default timeout
 
     async def test_lottery_losers_priority_over_waitlist(self):
         # 2 Places total
@@ -215,7 +216,7 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
             mock_app.bot.send_message = AsyncMock()
             with patch('bot.scheduler'):
                 await invite_next(event_id)
-                self.assertIn("24 ч.", mock_app.bot.send_message.call_args[0][1])
+                self.assertIn("24 ч", mock_app.bot.send_message.call_args[0][1])
 
         # 2. Test 24-48 hours -> 12h
         event_start_24h = get_now() + timedelta(hours=30)
@@ -227,7 +228,7 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
             mock_app.bot.send_message = AsyncMock()
             with patch('bot.scheduler'):
                 await invite_next(event_id)
-                self.assertIn("12 ч.", mock_app.bot.send_message.call_args[0][1])
+                self.assertIn("12 ч", mock_app.bot.send_message.call_args[0][1])
 
         # 3. Test < 24 hours -> 1h
         event_start_1h = get_now() + timedelta(hours=5)
@@ -239,7 +240,7 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
             mock_app.bot.send_message = AsyncMock()
             with patch('bot.scheduler'):
                 await invite_next(event_id)
-                self.assertIn("1 ч.", mock_app.bot.send_message.call_args[0][1])
+                self.assertIn("1 ч", mock_app.bot.send_message.call_args[0][1])
 
         # 4. Test < 2 hours -> STOP promotion
         event_start_stop = get_now() + timedelta(hours=1.5)
