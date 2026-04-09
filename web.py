@@ -27,9 +27,11 @@ def get_db():
     return conn
 
 def format_name(user):
-    if user.get('username'):
+    if user['username']:
         return f"@{user['username']}"
-    return f"{user.get('first_name', 'Unknown')} ({user.get('user_id', 'N/A')})"
+    first = user['first_name'] or 'Unknown'
+    uid = user['user_id'] or 'N/A'
+    return f"{first} ({uid})"
 
 app.jinja_env.filters['format_tz'] = format_tz
 app.jinja_env.filters['format_name'] = format_name
