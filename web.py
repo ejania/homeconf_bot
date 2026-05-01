@@ -1,11 +1,28 @@
+import hmac
 import os
 import sqlite3
-from flask import Flask, render_template_string, request
+from flask import Flask, Response, render_template_string, request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")
+WEB_USER = os.getenv("WEB_USER", "admin")
+WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
+
+
+@app.before_request
+def require_auth():
+    if app.config.get("TESTING"):
+        return None
+    auth = request.authorization
+    if auth and hmac.compare_digest(auth.username or "", WEB_USER) and hmac.compare_digest(auth.password or "", WEB_PASSWORD):
+        return None
+    return Response(
+        "Authentication required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Homeconf Admin"'},
+    )
 
 def format_tz(ts):
     if not ts:
@@ -374,4 +391,6 @@ def dashboard():
     )
 
 if __name__ == '__main__':
+    if not WEB_PASSWORD:
+        raise SystemExit("WEB_PASSWORD environment variable must be set to run the dashboard.")
     app.run(host='0.0.0.0', port=5000)

@@ -1,7 +1,9 @@
+import base64
 import unittest
 import sqlite3
 import os
 from unittest.mock import patch, MagicMock
+import web
 from web import app, get_db
 
 TEST_DB_PATH = ":memory:"
@@ -137,6 +139,40 @@ class TestWebDashboard(unittest.TestCase):
         
         # 10:00 UTC -> 11:00 Zurich
         self.assertIn("2024-03-09 11:00:00", html)
+
+class TestDashboardAuth(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = False
+        self._orig_user = web.WEB_USER
+        self._orig_pw = web.WEB_PASSWORD
+        web.WEB_USER = "admin"
+        web.WEB_PASSWORD = "secret"
+        self.client = app.test_client()
+
+    def tearDown(self):
+        app.config['TESTING'] = True
+        web.WEB_USER = self._orig_user
+        web.WEB_PASSWORD = self._orig_pw
+
+    def test_unauthenticated_request_returns_401(self):
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 401)
+        self.assertIn('WWW-Authenticate', resp.headers)
+
+    def test_wrong_password_returns_401(self):
+        creds = base64.b64encode(b"admin:wrong").decode()
+        resp = self.client.get('/', headers={"Authorization": f"Basic {creds}"})
+        self.assertEqual(resp.status_code, 401)
+
+    def test_correct_credentials_pass_auth(self):
+        creds = base64.b64encode(b"admin:secret").decode()
+        with patch('web.get_db') as mock_db:
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            mock_db.return_value = conn
+            resp = self.client.get('/', headers={"Authorization": f"Basic {creds}"})
+        self.assertNotEqual(resp.status_code, 401)
+
 
 if __name__ == '__main__':
     unittest.main()
