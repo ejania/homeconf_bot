@@ -19,5 +19,7 @@ services:
       - "5000:5000"
     environment:
       - DB_PATH=/app/data/bot_data.db
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
