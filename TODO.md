@@ -38,6 +38,18 @@
 - [x] **Database Cleanup & Event Renumbering**: Delete all old test events from the database and renumber the current event (#26) to be #8. 
 - [x] **Test Event Flag**: Add a flag for `/create` to mark an event as "test-only". Test-only events should be automatically deleted from the database as soon as a new, real event is created.
 - [x] **Polished Copywriting**: Review and edit all bot messages to sound even nicer, more welcoming, and more human.
+- [x] **Dashboard Auth**: Require HTTP basic auth on the web dashboard (was open on the public IP and getting scanned). User: `admin`, password in `WEB_PASSWORD` env.
+- [x] **Server & Repo Cleanup**: Delete one-off scripts and stale test fixtures from local repo and prod server; add `.DS_Store` and `data/` to `.gitignore`.
+- [x] **Public Attendee List (`/who`)**: DM-only command listing event attendees in three sections — Орги (hardcoded: @ejania, @crassirostris, @awarehouse), Докладчики (from speakers table, excl. orgs), Слушатели (registrations.status=ACCEPTED, excl. orgs). Available only after `/send_invites` (status=CLOSED). Privacy notice appended to register/guest-invite/guest-accept/waitlist-accept messages.
+
+## Pending — Future Features
+- [ ] **Couples in the Lottery**: Allow two registered users to pair up so they win or lose the lottery together — never split.
+    - Both must already be registered. Either runs `/pair @partner`; bot DMs partner with confirm flow. Pair locks only when both confirm.
+    - In the lottery: pair = single ticket worth 2 seats. Atomic outcome (both ACCEPTED or both WAITLIST). Waitlist promotion only when ≥2 contiguous slots are available.
+    - Pair priority = the *later* of the two confirmations (no late-pair queue jumping).
+    - If either partner unregisters, the other auto-vacates.
+    - Speakers excluded from pairing (already guaranteed; use existing `/invite` for their guest).
+    - Open questions to settle before coding: max 1 partner per person? what if pair loses lottery and 1 spot opens later — strict "both or neither" forever, or offer split? cutoff to form pairs (until `/close`? until `/open`?). All discussed in conversation 2026-05-01.
 
 ## Notes for Next Session
 - **Current State**: The bot is deployed on `104.248.28.207`. The current active flow uses `/create` -> `/open` -> `/close`.
