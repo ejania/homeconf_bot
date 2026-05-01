@@ -1,3 +1,4 @@
+import html
 import logging
 import random
 import os
@@ -1226,6 +1227,72 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
     conn.close()
 
+ORGANIZER_USERNAMES = ["ejania", "crassirostris", "awarehouse"]
+
+
+def _attendee_display_name(username, first_name):
+    if username:
+        return f"@{username}"
+    if first_name:
+        return html.escape(first_name)
+    return "Аноним"
+
+
+async def who(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await ensure_private(update, context):
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE id > 0 ORDER BY created_at DESC LIMIT 1")
+    event = cursor.fetchone()
+
+    if not event or event['status'] == 'CANCELLED':
+        await update.message.reply_text(messages.WHO_NO_EVENT)
+        conn.close()
+        return
+
+    if event['status'] != 'CLOSED':
+        await update.message.reply_text(messages.WHO_NOT_READY)
+        conn.close()
+        return
+
+    organizers = sorted((f"@{u}" for u in ORGANIZER_USERNAMES), key=str.lower)
+    placeholders = ",".join("?" * len(ORGANIZER_USERNAMES))
+    exclude_args = [event['id'], *ORGANIZER_USERNAMES]
+
+    cursor.execute(
+        f"SELECT username, first_name FROM speakers WHERE event_id = ? "
+        f"AND (LOWER(username) NOT IN ({placeholders}) OR username IS NULL)",
+        exclude_args,
+    )
+    speakers = sorted(
+        (_attendee_display_name(r['username'], r['first_name']) for r in cursor.fetchall()),
+        key=str.lower,
+    )
+
+    cursor.execute(
+        f"SELECT username, first_name FROM registrations WHERE event_id = ? AND status = 'ACCEPTED' "
+        f"AND (LOWER(username) NOT IN ({placeholders}) OR username IS NULL)",
+        exclude_args,
+    )
+    attendees = sorted(
+        (_attendee_display_name(r['username'], r['first_name']) for r in cursor.fetchall()),
+        key=str.lower,
+    )
+
+    msg = messages.WHO_HEADER
+    msg += messages.WHO_SECTION_ORGANIZERS.format(names="\n".join(organizers))
+    if speakers:
+        msg += messages.WHO_SECTION_SPEAKERS.format(names="\n".join(speakers))
+    msg += messages.WHO_SECTION_ATTENDEES.format(
+        names="\n".join(attendees) if attendees else messages.WHO_EMPTY_ATTENDEES
+    )
+
+    await update.message.reply_text(msg, parse_mode='HTML')
+    conn.close()
+
+
 async def list_participants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     cursor = conn.cursor()
@@ -1343,6 +1410,7 @@ async def post_init(app):
         BotCommand("start", messages.DESC_START),
         BotCommand("register", messages.DESC_REGISTER),
         BotCommand("status", messages.DESC_STATUS),
+        BotCommand("who", messages.DESC_WHO),
         BotCommand("unregister", messages.DESC_UNREGISTER),
         BotCommand("list", messages.DESC_LIST),
         BotCommand("invite", messages.DESC_INVITE),
@@ -1448,6 +1516,7 @@ def main():
     application.add_handler(CommandHandler("unregister", unregister))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("list", list_participants))
+    application.add_handler(CommandHandler("who", who))
     application.add_handler(CommandHandler("reset", reset_event))
     application.add_handler(CallbackQueryHandler(callback_handler))
     
