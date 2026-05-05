@@ -139,10 +139,74 @@ async def ensure_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def reoder_waitlist(event_id, cursor):
-    cursor.execute("SELECT id FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC", (event_id,))
+    """Compact waitlist priorities. Pair members keep a shared slot priority."""
+    cursor.execute(
+        "SELECT id, partner_reg_id FROM registrations WHERE event_id = ? AND status = 'WAITLIST' "
+        "ORDER BY priority ASC, id ASC",
+        (event_id,)
+    )
     rows = cursor.fetchall()
-    for i, r in enumerate(rows, 1):
-        cursor.execute("UPDATE registrations SET priority = ? WHERE id = ?", (i, r['id']))
+    seen = set()
+    slot = 1
+    for r in rows:
+        if r['id'] in seen:
+            continue
+        cursor.execute("UPDATE registrations SET priority = ? WHERE id = ?", (slot, r['id']))
+        seen.add(r['id'])
+        if r['partner_reg_id']:
+            cursor.execute(
+                "UPDATE registrations SET priority = ? WHERE id = ? AND status = 'WAITLIST'",
+                (slot, r['partner_reg_id'])
+            )
+            seen.add(r['partner_reg_id'])
+        slot += 1
+
+
+def _next_waitlist_unit(event_id, cursor, seats_available):
+    """Return list of registration rows to promote next (1 for single, 2 for pair),
+    or None if no fit. Honors strict priority: if the head of the waitlist is a pair
+    that doesn't fit in the available seats, return None (hold the seat) rather than
+    letting lower-priority singles jump the pair."""
+    cursor.execute(
+        "SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' "
+        "ORDER BY priority ASC, id ASC LIMIT 1",
+        (event_id,)
+    )
+    head = cursor.fetchone()
+    if not head:
+        return None
+    head = dict(head)
+    if head['partner_reg_id']:
+        cursor.execute("SELECT * FROM registrations WHERE id = ? AND status = 'WAITLIST'", (head['partner_reg_id'],))
+        partner = cursor.fetchone()
+        if partner:
+            if seats_available >= 2:
+                return [head, dict(partner)]
+            return None
+        # Partner is no longer on the waitlist (unlinked / unregistered): treat head as a single.
+    if seats_available >= 1:
+        return [head]
+    return None
+
+async def _unlink_partner(reg, cursor, bot):
+    """If reg has a partner, clear the link on both sides and DM the partner.
+    Used when reg is unregistering — we never auto-vacate the partner, just notify."""
+    partner_reg_id = reg['partner_reg_id'] if 'partner_reg_id' in reg.keys() else None
+    if not partner_reg_id:
+        return
+    cursor.execute("SELECT * FROM registrations WHERE id = ?", (partner_reg_id,))
+    partner = cursor.fetchone()
+    cursor.execute("UPDATE registrations SET partner_reg_id = NULL WHERE id = ?", (reg['id'],))
+    if not partner:
+        return
+    cursor.execute("UPDATE registrations SET partner_reg_id = NULL WHERE id = ?", (partner['id'],))
+    if partner['user_id']:
+        leaver = reg['username'] or reg['first_name'] or '—'
+        try:
+            await bot.send_message(partner['user_id'], messages.PAIR_PARTNER_UNREGISTERED.format(partner=leaver))
+        except Exception as e:
+            logging.error(f"Failed to notify pair partner of unregister: {e}")
+
 
 def log_action(event_id, user_id, username, first_name, action, details=""):
     try:
@@ -578,37 +642,93 @@ async def close_registration_job(event_id, chat_id):
              valid_regs.append(reg)
     
     regs = valid_regs
+    N = len(regs)
+    M = places_available
 
-    random.shuffle(regs)
-    winners = regs[:places_available]
-    lottery_losers = regs[places_available:]
-    
-    for reg in winners:
+    # Group into pairs (atomic units) and singles. A pair only counts if both members
+    # are in the lottery pool (e.g. neither got filtered as a speaker).
+    valid_ids = {r['id'] for r in regs}
+    by_id = {r['id']: r for r in regs}
+    processed = set()
+    pairs = []
+    singles = []
+    for reg in regs:
+        if reg['id'] in processed:
+            continue
+        processed.add(reg['id'])
+        partner_id = reg['partner_reg_id']
+        if partner_id and partner_id in valid_ids:
+            partner = by_id[partner_id]
+            processed.add(partner_id)
+            pairs.append((reg, partner))
+        else:
+            singles.append(reg)
+
+    # Stage 1: each pair flips an independent (M/N)-biased coin.
+    # Re-roll if we accidentally picked more pair seats than seats available.
+    # See TODO.md for the fairness derivation. With realistic configs (small P, generous M)
+    # the rejection branch almost never fires.
+    pair_winners = []
+    if N > 0 and M > 0:
+        p_win = M / N
+        attempts = 0
+        while True:
+            attempts += 1
+            pair_winners = [pair for pair in pairs if random.random() < p_win]
+            if 2 * len(pair_winners) <= M:
+                break
+            if attempts >= 1000:
+                # Pathological config (e.g. lots of pairs, few seats). Fall back to
+                # uniformly downsampling pair winners to fit.
+                random.shuffle(pair_winners)
+                pair_winners = pair_winners[: M // 2]
+                break
+
+    # Stage 2: fill remaining seats with random singles.
+    seats_left = M - 2 * len(pair_winners)
+    seats_left = max(0, seats_left)
+    single_winners = random.sample(singles, min(seats_left, len(singles))) if singles else []
+
+    winner_regs = []
+    for a, b in pair_winners:
+        winner_regs.append(a)
+        winner_regs.append(b)
+    winner_regs.extend(single_winners)
+
+    pair_winners_set = {id(p) for p in pair_winners}
+    loser_pairs = [p for p in pairs if id(p) not in pair_winners_set]
+    single_winner_ids = {s['id'] for s in single_winners}
+    loser_singles = [s for s in singles if s['id'] not in single_winner_ids]
+
+    # Stage 3: shuffle loser units (pair = one slot, both members share priority).
+    loser_units = [list(p) for p in loser_pairs] + [[s] for s in loser_singles]
+    random.shuffle(loser_units)
+
+    for reg in winner_regs:
         cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg['id'],))
-        # Notifications skipped for review
 
-    # Handle Waitlist Priorities
-    # Shift existing waitlist users down by len(lottery_losers)
-    if lottery_losers:
+    if loser_units:
         cursor.execute(
             "UPDATE registrations SET priority = priority + ? WHERE event_id = ? AND status = 'WAITLIST'",
-            (len(lottery_losers), event_id)
+            (len(loser_units), event_id)
         )
-        
-    for i, reg in enumerate(lottery_losers):
-        cursor.execute(
-            "UPDATE registrations SET status = 'WAITLIST', priority = ? WHERE id = ?",
-            (i, reg['id'])
-        )
-        # Notifications skipped for review
+    for i, unit in enumerate(loser_units):
+        for reg in unit:
+            cursor.execute(
+                "UPDATE registrations SET status = 'WAITLIST', priority = ? WHERE id = ?",
+                (i, reg['id'])
+            )
 
     conn.commit()
-
-    # Immediate Promotion skipped during review - it will happen during send_invites if needed
-
     conn.close()
-    log_action(event_id, None, "System", None, "LOTTERY_COMPLETE", f"Winners: {len(winners)}, Waitlist: {len(lottery_losers)}")
-    await application.bot.send_message(chat_id, messages.REGISTRATION_CLOSED_SUMMARY.format(winners=len(winners), waitlist=len(lottery_losers)))
+
+    waitlist_people = sum(len(u) for u in loser_units)
+    log_action(
+        event_id, None, "System", None, "LOTTERY_COMPLETE",
+        f"Winners: {len(winner_regs)} ({len(pair_winners)} pairs + {len(single_winners)} singles), "
+        f"Waitlist: {waitlist_people} ({len(loser_pairs)} pairs + {len(loser_singles)} singles)"
+    )
+    await application.bot.send_message(chat_id, messages.REGISTRATION_CLOSED_SUMMARY.format(winners=len(winner_regs), waitlist=waitlist_people))
     await application.bot.send_message(chat_id, messages.LOTTERY_READY_FOR_REVIEW)
 
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -726,6 +846,123 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn.commit()
     conn.close()
+
+async def _is_speaker_user(event, user_id, username, cursor, context_or_app):
+    if not event:
+        return False
+    if event['speakers_group_id']:
+        try:
+            member = await context_or_app.bot.get_chat_member(_get_group_id(event['speakers_group_id']), user_id)
+            if member.status in ["member", "administrator", "creator"]:
+                return True
+        except Exception:
+            pass
+    if username:
+        cursor.execute("SELECT id FROM speakers WHERE event_id = ? AND username = ?", (event['id'], username.lower()))
+        if cursor.fetchone():
+            return True
+    return False
+
+
+async def pair_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await ensure_private(update, context):
+        return
+
+    if not context.args:
+        await update.message.reply_text(messages.USAGE_PAIR)
+        return
+
+    target_input = context.args[0].lstrip('@').strip()
+    if not re.match(r'^[a-zA-Z0-9_]{4,32}$', target_input):
+        await update.message.reply_text(messages.PAIR_INVALID_USERNAME)
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 1")
+    event = cursor.fetchone()
+
+    if not event or event['status'] != 'OPEN':
+        await update.message.reply_text(messages.PAIR_NOT_OPEN)
+        conn.close()
+        return
+
+    if update.effective_user.username and target_input.lower() == update.effective_user.username.lower():
+        await update.message.reply_text(messages.PAIR_SELF)
+        conn.close()
+        return
+
+    cursor.execute(
+        "SELECT * FROM registrations WHERE event_id = ? AND user_id = ? AND status = 'REGISTERED' AND guest_of_user_id IS NULL ORDER BY id DESC LIMIT 1",
+        (event['id'], update.effective_user.id)
+    )
+    requester_reg = cursor.fetchone()
+    if not requester_reg:
+        await update.message.reply_text(messages.PAIR_NOT_REGISTERED)
+        conn.close()
+        return
+
+    if requester_reg['partner_reg_id']:
+        cursor.execute("SELECT username FROM registrations WHERE id = ?", (requester_reg['partner_reg_id'],))
+        prev = cursor.fetchone()
+        prev_name = prev['username'] if prev and prev['username'] else "—"
+        await update.message.reply_text(messages.PAIR_ALREADY_PAIRED.format(partner=prev_name))
+        conn.close()
+        return
+
+    if await _is_speaker_user(event, update.effective_user.id, update.effective_user.username, cursor, context):
+        await update.message.reply_text(messages.ALREADY_SPEAKER)
+        conn.close()
+        return
+
+    cursor.execute(
+        "SELECT * FROM registrations WHERE event_id = ? AND LOWER(username) = ? AND status = 'REGISTERED' ORDER BY id DESC LIMIT 1",
+        (event['id'], target_input.lower())
+    )
+    target_reg = cursor.fetchone()
+
+    if not target_reg or not target_reg['user_id']:
+        await update.message.reply_text(messages.PAIR_PARTNER_NOT_FOUND.format(username=target_input))
+        conn.close()
+        return
+
+    if target_reg['guest_of_user_id'] is not None:
+        await update.message.reply_text(messages.PAIR_PARTNER_IS_GUEST.format(username=target_input))
+        conn.close()
+        return
+
+    if await _is_speaker_user(event, target_reg['user_id'], target_reg['username'], cursor, context):
+        await update.message.reply_text(messages.PAIR_PARTNER_IS_SPEAKER.format(username=target_input))
+        conn.close()
+        return
+
+    if target_reg['partner_reg_id']:
+        await update.message.reply_text(messages.PAIR_PARTNER_ALREADY_PAIRED.format(username=target_input))
+        conn.close()
+        return
+
+    requester_username = update.effective_user.username or update.effective_user.first_name or "—"
+    keyboard = [[
+        InlineKeyboardButton(messages.PAIR_BUTTON_ACCEPT, callback_data=f"pyes_{requester_reg['id']}_{target_reg['id']}"),
+        InlineKeyboardButton(messages.PAIR_BUTTON_DECLINE, callback_data=f"pno_{requester_reg['id']}_{target_reg['id']}")
+    ]]
+
+    try:
+        await context.bot.send_message(
+            target_reg['user_id'],
+            messages.PAIR_INCOMING.format(requester=requester_username),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logging.error(f"Failed to DM pair target {target_reg['user_id']}: {e}")
+        await update.message.reply_text(messages.PAIR_PARTNER_NO_DM.format(username=target_input))
+        conn.close()
+        return
+
+    log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'PAIR_REQUEST', f'target={target_input}')
+    await update.message.reply_text(messages.PAIR_REQUEST_SENT.format(username=target_input))
+    conn.close()
+
 
 async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private(update, context):
@@ -959,10 +1196,11 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', user_id = ? WHERE id = ?", (update.effective_user.id, reg['id']))
+    await _unlink_partner(reg, cursor, context.bot)
     conn.commit()
     log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'UNREGISTER', f'Old status: {old_status}')
     await update.message.reply_text(messages.UNREGISTERED_SUCCESS)
-    
+
     if old_status in ('ACCEPTED', 'INVITED'):
         await invite_next(reg['event_id'])
 
@@ -997,32 +1235,27 @@ async def invite_next(event_id):
         return
     # -----------------------------
 
+    seats_available = (event['total_places'] - total_occupied) if event['total_places'] is not None else 1
+
     # If in REVIEW, we promote to ACCEPTED silently
     # They will be notified later when admin runs /send_invites
     if event['status'] == 'REVIEW':
-        cursor.execute(
-            "SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC LIMIT 1",
-            (event_id,)
-        )
-        next_reg = cursor.fetchone()
-        if next_reg:
-            # We do NOT set notified_at here, so /send_invites picks them up
-            cursor.execute(
-                "UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", 
-                (next_reg['id'],)
-            )
+        unit = _next_waitlist_unit(event_id, cursor, seats_available)
+        if unit:
+            for reg in unit:
+                cursor.execute("UPDATE registrations SET status = 'ACCEPTED' WHERE id = ?", (reg['id'],))
+                log_action(event_id, reg['user_id'], reg['username'], reg['first_name'], 'PROMOTE_REVIEW', 'Waitlist promoted silently during review')
             conn.commit()
-            log_action(event_id, next_reg['user_id'], next_reg['username'], next_reg['first_name'], 'PROMOTE_REVIEW', 'Waitlist promoted silently during review')
         conn.close()
         return
-        
+
     # Default timeout is 24h
     default_timeout = 24
-    
+
     # Calculate dynamic timeout based on distance to event
     now = get_now()
     timeout_hours = default_timeout
-    
+
     if event['event_start_time']:
         # Ensure event_start_time has tzinfo for comparison
         event_start = event['event_start_time']
@@ -1030,9 +1263,9 @@ async def invite_next(event_id):
             event_start = datetime.fromisoformat(event_start)
         if event_start.tzinfo is None:
             event_start = event_start.replace(tzinfo=ZoneInfo("UTC"))
-            
+
         time_to_event = event_start - now
-        
+
         # Stop promotions 2 hours before the event
         if time_to_event < timedelta(hours=2):
             logging.info(f"Event {event_id} starts in {time_to_event}, stopping waitlist promotions.")
@@ -1045,46 +1278,57 @@ async def invite_next(event_id):
             timeout_hours = 12
         else:
             timeout_hours = default_timeout
-            
-    cursor.execute(
-        "SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' ORDER BY priority ASC LIMIT 1",
-        (event_id,)
-    )
-    next_reg = cursor.fetchone()
-    
-    if next_reg:
-        expires_at = calculate_expiration_with_night_pause(get_now(), timeout_hours)
+
+    unit = _next_waitlist_unit(event_id, cursor, seats_available)
+    if not unit:
+        conn.close()
+        return
+
+    expires_at = calculate_expiration_with_night_pause(get_now(), timeout_hours)
+    for reg in unit:
         cursor.execute(
             "UPDATE registrations SET status = 'INVITED', notified_at = ?, expires_at = ?, priority = 0 WHERE id = ?",
-            (get_now(), expires_at, next_reg['id'])
+            (get_now(), expires_at, reg['id'])
         )
-        reoder_waitlist(event_id, cursor)
-        conn.commit()
-        log_action(event_id, next_reg['user_id'], next_reg['username'], next_reg['first_name'], 'INVITE_NEXT', 'Waitlist invited')
-        
-        keyboard = [[InlineKeyboardButton("Accept", callback_data=f"acc_{next_reg['id']}"),
-                     InlineKeyboardButton("Decline", callback_data=f"dec_{next_reg['id']}")]]
-        
+    reoder_waitlist(event_id, cursor)
+    conn.commit()
+
+    is_pair = len(unit) == 2
+    for reg in unit:
+        log_action(event_id, reg['user_id'], reg['username'], reg['first_name'], 'INVITE_NEXT', 'Pair invited' if is_pair else 'Waitlist invited')
+
+    for reg in unit:
+        partner_username = None
+        if is_pair:
+            partner = unit[1] if reg['id'] == unit[0]['id'] else unit[0]
+            partner_username = partner['username'] or partner['first_name'] or '—'
+        keyboard = [[
+            InlineKeyboardButton("Accept", callback_data=f"acc_{reg['id']}"),
+            InlineKeyboardButton("Decline", callback_data=f"dec_{reg['id']}")
+        ]]
+        text = (
+            messages.SPOT_OPENED_PAIR_INVITE.format(partner=partner_username, hours=timeout_hours)
+            if is_pair else
+            messages.SPOT_OPENED_INVITE.format(hours=timeout_hours)
+        )
         try:
             await application.bot.send_message(
-                next_reg['user_id'],
-                messages.SPOT_OPENED_INVITE.format(hours=timeout_hours),
+                reg['user_id'],
+                text,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
-            logging.error(f"Failed to notify waitlist user {next_reg['user_id']}: {e}")
-            # Even if message fails, we keep them as INVITED for now
-            # They will eventually EXPIRE if they don't see it
-        
+            logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
+
         scheduler.add_job(
-            check_timeout_job, 
-            'date', 
-            run_date=expires_at, 
-            args=[next_reg['id']],
-            id=f"timeout_{next_reg['id']}",
+            check_timeout_job,
+            'date',
+            run_date=expires_at,
+            args=[reg['id']],
+            id=f"timeout_{reg['id']}",
             replace_existing=True
         )
-    
+
     conn.close()
 
 async def check_timeout_job(reg_id):
@@ -1092,29 +1336,119 @@ async def check_timeout_job(reg_id):
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM registrations WHERE id = ?", (reg_id,))
     reg = cursor.fetchone()
-    
+
     if reg and reg['status'] == 'INVITED':
+        # If paired and partner is also INVITED, expire both atomically.
+        partner = None
+        if reg['partner_reg_id']:
+            cursor.execute("SELECT * FROM registrations WHERE id = ?", (reg['partner_reg_id'],))
+            p = cursor.fetchone()
+            if p and p['status'] == 'INVITED':
+                partner = p
+
         cursor.execute("UPDATE registrations SET status = 'EXPIRED' WHERE id = ?", (reg_id,))
+        if partner:
+            cursor.execute("UPDATE registrations SET status = 'EXPIRED' WHERE id = ?", (partner['id'],))
         conn.commit()
+
         log_action(reg['event_id'], reg['user_id'], reg['username'], reg['first_name'], 'EXPIRE_INVITE', 'Waitlist invite expired')
-        try:
-            await application.bot.send_message(reg['user_id'], messages.INVITATION_EXPIRED)
-        except: pass
+        if partner:
+            log_action(partner['event_id'], partner['user_id'], partner['username'], partner['first_name'], 'EXPIRE_INVITE', 'Pair partner expired together')
+
+        for r in ([reg, partner] if partner else [reg]):
+            try:
+                await application.bot.send_message(r['user_id'], messages.INVITATION_EXPIRED)
+            except: pass
         await invite_next(reg['event_id'])
     conn.close()
+
+async def handle_pair_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, action, parts):
+    query = update.callback_query
+    try:
+        requester_reg_id = int(parts[1])
+        target_reg_id = int(parts[2])
+    except (IndexError, ValueError):
+        await query.edit_message_text(messages.PAIR_INVITE_STALE)
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM registrations WHERE id = ?", (requester_reg_id,))
+    requester = cursor.fetchone()
+    cursor.execute("SELECT * FROM registrations WHERE id = ?", (target_reg_id,))
+    target = cursor.fetchone()
+
+    if not requester or not target or target['user_id'] != update.effective_user.id:
+        await query.edit_message_text(messages.PAIR_INVITE_STALE)
+        conn.close()
+        return
+
+    cursor.execute("SELECT * FROM events WHERE id = ?", (requester['event_id'],))
+    event = cursor.fetchone()
+
+    if not event or event['status'] != 'OPEN':
+        await query.edit_message_text(messages.PAIR_INVITE_STALE)
+        conn.close()
+        return
+
+    if (requester['status'] != 'REGISTERED' or target['status'] != 'REGISTERED'
+            or requester['partner_reg_id'] is not None or target['partner_reg_id'] is not None
+            or requester['guest_of_user_id'] is not None or target['guest_of_user_id'] is not None):
+        await query.edit_message_text(messages.PAIR_INVITE_STALE)
+        conn.close()
+        return
+
+    requester_label = f"@{requester['username']}" if requester['username'] else (requester['first_name'] or "—")
+    target_label = f"@{target['username']}" if target['username'] else (target['first_name'] or "—")
+
+    if action == "pyes":
+        cursor.execute("UPDATE registrations SET partner_reg_id = ? WHERE id = ?", (target_reg_id, requester_reg_id))
+        cursor.execute("UPDATE registrations SET partner_reg_id = ? WHERE id = ?", (requester_reg_id, target_reg_id))
+        conn.commit()
+        log_action(event['id'], target['user_id'], target['username'], target['first_name'], 'PAIR_CONFIRM', f'with {requester_label}')
+
+        await query.edit_message_text(messages.PAIR_CONFIRMED_TO_PARTNER.format(partner=requester_label.lstrip('@')))
+        try:
+            if requester['user_id']:
+                await context.bot.send_message(
+                    requester['user_id'],
+                    messages.PAIR_CONFIRMED_TO_REQUESTER.format(partner=target_label.lstrip('@'))
+                )
+        except Exception as e:
+            logging.error(f"Failed to notify pair requester {requester['user_id']}: {e}")
+    else:
+        log_action(event['id'], target['user_id'], target['username'], target['first_name'], 'PAIR_DECLINE', f'from {requester_label}')
+        await query.edit_message_text(messages.PAIR_DECLINED_TO_PARTNER.format(requester=requester_label.lstrip('@')))
+        try:
+            if requester['user_id']:
+                await context.bot.send_message(
+                    requester['user_id'],
+                    messages.PAIR_DECLINED_TO_REQUESTER.format(partner=target_label.lstrip('@'))
+                )
+        except Exception as e:
+            logging.error(f"Failed to notify pair requester {requester['user_id']}: {e}")
+
+    conn.close()
+
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    action, reg_id = query.data.split("_")
-    reg_id = int(reg_id)
-    
+
+    parts = query.data.split("_")
+    action = parts[0]
+
+    if action in ("pyes", "pno"):
+        await handle_pair_callback(update, context, action, parts)
+        return
+
+    reg_id = int(parts[1])
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM registrations WHERE id = ?", (reg_id,))
     reg = cursor.fetchone()
-    
+
     if not reg or reg['user_id'] != update.effective_user.id:
         await query.edit_message_text(messages.INVALID_INVITATION)
         conn.close()
@@ -1125,18 +1459,40 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(messages.INVALID_INVITATION)
             conn.close()
             return
-            
+
+        # Resolve partner if invited together as a pair
+        partner = None
+        if reg['partner_reg_id']:
+            cursor.execute("SELECT * FROM registrations WHERE id = ?", (reg['partner_reg_id'],))
+            p = cursor.fetchone()
+            if p and p['status'] == 'INVITED':
+                partner = p
+
         if action == "acc":
             cursor.execute("UPDATE registrations SET status = 'ACCEPTED', priority = NULL WHERE id = ?", (reg_id,))
+            if partner:
+                cursor.execute("UPDATE registrations SET status = 'ACCEPTED', priority = NULL WHERE id = ?", (partner['id'],))
             reoder_waitlist(reg['event_id'], cursor)
             conn.commit()
-            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_ACCEPT', '')
+            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_ACCEPT', 'Pair' if partner else '')
             await query.edit_message_text(messages.INVITATION_ACCEPTED)
+            if partner:
+                try:
+                    await context.bot.send_message(partner['user_id'], messages.INVITATION_ACCEPTED)
+                except Exception:
+                    pass
         else:
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', priority = NULL WHERE id = ?", (reg_id,))
+            if partner:
+                cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', priority = NULL WHERE id = ?", (partner['id'],))
             conn.commit() # Commit BEFORE invite_next
-            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_DECLINE', '')
+            log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_DECLINE', 'Pair' if partner else '')
             await query.edit_message_text(messages.INVITATION_DECLINED)
+            if partner:
+                try:
+                    await context.bot.send_message(partner['user_id'], messages.INVITATION_DECLINED)
+                except Exception:
+                    pass
             await invite_next(reg['event_id'])
             
     elif action == "uyes":
@@ -1145,6 +1501,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             old_status = reg['status']
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED' WHERE id = ?", (reg_id,))
+            await _unlink_partner(reg, cursor, context.bot)
             conn.commit() # Commit BEFORE invite_next
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'UNREGISTER', f'Confirmed unregister: {old_status}')
             await query.edit_message_text(messages.UNREGISTERED_SUCCESS)
@@ -1414,6 +1771,7 @@ async def post_init(app):
         BotCommand("unregister", messages.DESC_UNREGISTER),
         BotCommand("list", messages.DESC_LIST),
         BotCommand("invite", messages.DESC_INVITE),
+        BotCommand("pair", messages.DESC_PAIR),
     ]
     
     admin_commands = user_commands + [
@@ -1513,6 +1871,7 @@ def main():
     application.add_handler(CommandHandler("send_invites", send_invites))
     application.add_handler(CommandHandler("register", register))
     application.add_handler(CommandHandler("invite", invite_guest))
+    application.add_handler(CommandHandler("pair", pair_command))
     application.add_handler(CommandHandler("unregister", unregister))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("list", list_participants))

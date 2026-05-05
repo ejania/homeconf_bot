@@ -39,6 +39,7 @@ def init_db():
             notified_at DATETIME,
             expires_at DATETIME,
             guest_of_user_id INTEGER, -- ID of the speaker who invited this user
+            partner_reg_id INTEGER, -- registrations.id of confirmed pair partner
             FOREIGN KEY (event_id) REFERENCES events (id)
         )
     ''')
@@ -97,6 +98,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE registrations ADD COLUMN invite_token TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE registrations ADD COLUMN partner_reg_id INTEGER")
     except sqlite3.OperationalError:
         pass
 

@@ -24,7 +24,7 @@ class TestWebDashboard(unittest.TestCase):
         cursor = self.conn.cursor()
         cursor.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, status TEXT, total_places INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
         cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, first_name TEXT)")
-        cursor.execute("CREATE TABLE registrations (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, status TEXT, guest_of_user_id INTEGER, signup_time DATETIME, priority INTEGER)")
+        cursor.execute("CREATE TABLE registrations (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, status TEXT, guest_of_user_id INTEGER, partner_reg_id INTEGER, signup_time DATETIME, priority INTEGER)")
         cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, timestamp DATETIME, username TEXT, first_name TEXT, user_id INTEGER, action TEXT, details TEXT)")
         
         # Insert test data

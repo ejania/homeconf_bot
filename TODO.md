@@ -45,11 +45,14 @@
 ## Pending — Future Features
 - [ ] **Couples in the Lottery**: Allow two registered users to pair up so they win or lose the lottery together — never split.
     - Both must already be registered. Either runs `/pair @partner`; bot DMs partner with confirm flow. Pair locks only when both confirm.
-    - In the lottery: pair = single ticket worth 2 seats. Atomic outcome (both ACCEPTED or both WAITLIST). Waitlist promotion only when ≥2 contiguous slots are available.
-    - Pair priority = the *later* of the two confirmations (no late-pair queue jumping).
-    - If either partner unregisters, the other auto-vacates.
-    - Speakers excluded from pairing (already guaranteed; use existing `/invite` for their guest).
-    - Open questions to settle before coding: max 1 partner per person? what if pair loses lottery and 1 spot opens later — strict "both or neither" forever, or offer split? cutoff to form pairs (until `/close`? until `/open`?). All discussed in conversation 2026-05-01.
+    - Max **1** partner per person.
+    - Pairing cutoff: end of registration (when `/close` runs / lottery starts).
+    - **Lottery — fair stratified algorithm** (designed 2026-05-02): each pair gets an independent coin flip with prob `M/N` (target individual win rate); if `2K > M` re-roll Stage 1; then fill remaining seats with `random.sample` from singles. Gives every individual P(win) = M/N exactly.
+    - Atomic outcome: both ACCEPTED or both WAITLIST.
+    - Waitlist priorities assigned by uniform shuffle among losers (each pair = one slot). Strict priority order: if a pair is at the head of the waitlist and only 1 seat is open, **hold the seat** — nobody promotes until a second seat opens (or the pair leaves). Lower-priority singles do not jump the pair.
+    - Strict "both or neither" forever — no split offer if 1 spot opens later.
+    - If either partner unregisters, the link is dropped and the other is *notified* but *kept* in their current state (REGISTERED / ACCEPTED / WAITLIST). They can choose to leave too via `/unregister`. Rationale: at any state, the remaining person individually wanted/got the spot — auto-vacating them feels too paternalistic.
+    - Speakers excluded from pairing (already guaranteed; use existing `/invite` for their guest). Guests (`guest_of_user_id IS NOT NULL`) excluded too.
 
 ## Notes for Next Session
 - **Current State**: The bot is deployed on `104.248.28.207`. The current active flow uses `/create` -> `/open` -> `/close`.

@@ -41,7 +41,7 @@ class TestAutoUpdateTotalPlaces(unittest.IsolatedAsyncioTestCase):
                 priority INTEGER,
                 notified_at DATETIME,
                 expires_at DATETIME,
-                guest_of_user_id INTEGER,
+                guest_of_user_id INTEGER, partner_reg_id INTEGER,
                 invite_token TEXT,
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
