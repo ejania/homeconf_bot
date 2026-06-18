@@ -243,6 +243,62 @@ class TestPairCommand(_BaseCase):
         update, context = await self._call_pair(111, 'alice_user', '!!!')
         update.message.reply_text.assert_called_with(messages.PAIR_INVALID_USERNAME)
 
+    async def test_pair_when_requester_is_speaker(self):
+        """A speaker cannot initiate a pair request."""
+        event_id = self._add_event(status='OPEN', total_places=10, speakers_group_id='grp_123')
+        self._add_reg(event_id, 111, 'alice_speaker')
+        self._add_reg(event_id, 222, 'bob_user')
+
+        update = MagicMock()
+        update.effective_chat.type = "private"
+        update.effective_user.id = 111
+        update.effective_user.username = "alice_speaker"
+        update.effective_user.first_name = "Alice"
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.args = ['@bob_user']
+        context.bot.send_message = AsyncMock()
+
+        async def mock_get_chat_member(chat_id, user_id):
+            member = MagicMock()
+            member.status = "member" if user_id == 111 else "left"
+            return member
+
+        context.bot.get_chat_member = AsyncMock(side_effect=mock_get_chat_member)
+
+        await pair_command(update, context)
+
+        update.message.reply_text.assert_called_with(messages.ALREADY_SPEAKER)
+
+    async def test_pair_target_is_speaker(self):
+        """A user cannot pair with a speaker (they have a guaranteed spot)."""
+        event_id = self._add_event(status='OPEN', total_places=10, speakers_group_id='grp_123')
+        self._add_reg(event_id, 111, 'alice_user')
+        self._add_reg(event_id, 222, 'bob_speaker')
+
+        update = MagicMock()
+        update.effective_chat.type = "private"
+        update.effective_user.id = 111
+        update.effective_user.username = "alice_user"
+        update.effective_user.first_name = "Alice"
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.args = ['@bob_speaker']
+        context.bot.send_message = AsyncMock()
+
+        async def mock_get_chat_member(chat_id, user_id):
+            member = MagicMock()
+            member.status = "member" if user_id == 222 else "left"
+            return member
+
+        context.bot.get_chat_member = AsyncMock(side_effect=mock_get_chat_member)
+
+        await pair_command(update, context)
+
+        update.message.reply_text.assert_called_with(
+            messages.PAIR_PARTNER_IS_SPEAKER.format(username='bob_speaker')
+        )
+
 
 class TestLotteryWithPairs(_BaseCase):
     async def test_pair_atomic_outcome(self):
