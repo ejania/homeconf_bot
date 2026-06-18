@@ -396,6 +396,15 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode='Markdown'
     )
 
+    if event['speakers_group_id']:
+        try:
+            await context.bot.send_message(
+                _get_group_id(event['speakers_group_id']),
+                messages.SPEAKERS_INVITE_WINDOW_CLOSED
+            )
+        except Exception as e:
+            logging.error(f"Failed to notify speakers group on open: {e}")
+
 async def close_registration_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text(messages.ONLY_ADMIN_CLOSE)
@@ -1454,13 +1463,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
             
-    if action in ("acc", "dec"):
+    if action in ("acc", "dec", "decyes", "decno"):
         if reg['status'] != 'INVITED':
             await query.edit_message_text(messages.INVALID_INVITATION)
             conn.close()
             return
 
-        # Resolve partner if invited together as a pair
+        # Resolve partner if invited together as a pair and still pending
         partner = None
         if reg['partner_reg_id']:
             cursor.execute("SELECT * FROM registrations WHERE id = ?", (reg['partner_reg_id'],))
@@ -1481,19 +1490,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(partner['user_id'], messages.INVITATION_ACCEPTED)
                 except Exception:
                     pass
-        else:
+
+        elif action == "dec":
+            # Show confirmation before permanently discarding the spot
+            if partner and partner['username']:
+                confirm_text = messages.INVITATION_DECLINE_CONFIRM_PAIR.format(partner=partner['username'])
+            else:
+                confirm_text = messages.INVITATION_DECLINE_CONFIRM
+            keyboard = [[
+                InlineKeyboardButton("Отказаться", callback_data=f"decyes_{reg_id}"),
+                InlineKeyboardButton("Нет, остаюсь!", callback_data=f"decno_{reg_id}")
+            ]]
+            await query.edit_message_text(confirm_text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+        elif action == "decyes":
+            # Confirmed decline — execute and notify partner with a distinct message
+            decliner_label = reg['username'] or reg['first_name'] or "—"
             cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', priority = NULL WHERE id = ?", (reg_id,))
             if partner:
                 cursor.execute("UPDATE registrations SET status = 'UNREGISTERED', priority = NULL WHERE id = ?", (partner['id'],))
-            conn.commit() # Commit BEFORE invite_next
+            conn.commit()
             log_action(reg['event_id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'CALLBACK_DECLINE', 'Pair' if partner else '')
             await query.edit_message_text(messages.INVITATION_DECLINED)
             if partner:
                 try:
-                    await context.bot.send_message(partner['user_id'], messages.INVITATION_DECLINED)
+                    await context.bot.send_message(
+                        partner['user_id'],
+                        messages.INVITATION_PARTNER_DECLINED.format(partner=decliner_label)
+                    )
                 except Exception:
                     pass
             await invite_next(reg['event_id'])
+
+        elif action == "decno":
+            # User changed their mind — restore the accept button
+            keyboard = [[InlineKeyboardButton("Принять", callback_data=f"acc_{reg_id}")]]
+            await query.edit_message_text(
+                messages.INVITATION_DECLINE_ABORTED,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
             
     elif action == "uyes":
         if reg['status'] == 'UNREGISTERED':
