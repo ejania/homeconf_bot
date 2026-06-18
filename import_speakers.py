@@ -40,7 +40,8 @@ async def main():
         group_peer = int(args.group_id) if args.group_id.lstrip('-').isdigit() else args.group_id
         
         print(f"Fetching members from chat: {group_peer}...")
-        participants = await client.get_participants(group_peer)
+        entity = await client.get_entity(group_peer)
+        participants = await client.get_participants(entity)
         
         print(f"Found {len(participants)} members.")
         
