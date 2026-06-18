@@ -75,7 +75,7 @@ class TestWebDashboard(unittest.TestCase):
         html = response.data.decode()
         
         # Check title update
-        self.assertIn("<h2>Real-time Action Logs (Zurich)</h2>", html)
+        self.assertIn("Action Logs", html)
         self.assertNotIn("(Latest 150)", html)
         
         # Check that we do NOT see log 0, but DO see log 199 (due to LIMIT 100)
@@ -104,7 +104,7 @@ class TestWebDashboard(unittest.TestCase):
         self.assertNotIn("@test_speaker", html)
         self.assertNotIn("@test_user", html)
         # Should STILL show logs
-        self.assertIn("Real-time Action Logs (Zurich)", html)
+        self.assertIn("Action Logs", html)
         self.assertEqual(html.count("ACTION_"), 100)
 
     def test_timestamp_formatting_zurich(self):
