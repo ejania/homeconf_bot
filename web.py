@@ -255,8 +255,8 @@ TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Col 4: Logs — spans the full height -->
-            <div class="panel-logs" style="grid-row: 1;">
+            <!-- Col 4: Logs -->
+            <div class="panel-logs" style="grid-column: 4;">
                 <h2>Action Logs · Zurich</h2>
                 <div class="table-wrap" id="logs-wrap-event" style="max-height: calc(100vh - 120px);">
                     <table>
