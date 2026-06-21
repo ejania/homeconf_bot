@@ -37,6 +37,7 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is not set")
 
 ADMIN_IDS = {int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()}
+ORGANIZER_USERNAMES = {"ejania", "crassirostris", "awarehouse"}
 
 # Timezone configuration
 TZ = ZoneInfo("Europe/Berlin")
@@ -1042,23 +1043,28 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    # Check if speaker already invited someone
-    cursor.execute(
-        "SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id = ? AND status != 'UNREGISTERED'",
-        (event['id'], update.effective_user.id)
-    )
-    existing_invite = cursor.fetchone()
+    # Organizers can invite unlimited guests; regular speakers are limited to one
+    caller_username = (update.effective_user.username or "").lower()
+    is_unlimited = caller_username in ORGANIZER_USERNAMES
+
+    # Check if speaker already invited someone (skip for organizers)
     invite_to_delete_id = None
     old_guest_message = ""
-    if existing_invite:
-        if existing_invite['user_id'] is not None:
-            await update.message.reply_text(messages.ALREADY_INVITED_GUEST)
-            log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'INVITE_FAIL', 'Already invited a guest who is registered')
-            conn.close()
-            return
-        elif existing_invite['username'].lower() != guest_username.lower():
-            invite_to_delete_id = existing_invite['id']
-            old_guest_message = messages.GUEST_REPLACED.format(old_username=existing_invite['username']) + "\n\n"
+    if not is_unlimited:
+        cursor.execute(
+            "SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id = ? AND status != 'UNREGISTERED'",
+            (event['id'], update.effective_user.id)
+        )
+        existing_invite = cursor.fetchone()
+        if existing_invite:
+            if existing_invite['user_id'] is not None:
+                await update.message.reply_text(messages.ALREADY_INVITED_GUEST)
+                log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'INVITE_FAIL', 'Already invited a guest who is registered')
+                conn.close()
+                return
+            elif existing_invite['username'].lower() != guest_username.lower():
+                invite_to_delete_id = existing_invite['id']
+                old_guest_message = messages.GUEST_REPLACED.format(old_username=existing_invite['username']) + "\n\n"
 
     # Check if guest is a speaker (manual list)
     cursor.execute(
@@ -1618,9 +1624,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg)
     conn.close()
-
-ORGANIZER_USERNAMES = ["ejania", "crassirostris", "awarehouse"]
-
 
 def _attendee_display_name(username, first_name):
     if username:
