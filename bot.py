@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from models import init_db, get_db
 import messages
@@ -1893,6 +1893,12 @@ async def post_init(app):
             
     conn.close()
 
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await is_admin(update, context):
+        await update.message.reply_text(messages.UNKNOWN_COMMAND_ADMIN)
+    else:
+        await update.message.reply_text(messages.UNKNOWN_COMMAND_USER)
+
 def main():
     global application
     init_db()
@@ -1913,7 +1919,8 @@ def main():
     application.add_handler(CommandHandler("who", who))
     application.add_handler(CommandHandler("reset", reset_event))
     application.add_handler(CallbackQueryHandler(callback_handler))
-    
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+
     logging.info("Bot starting polling...")
     application.run_polling()
 
