@@ -358,15 +358,16 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         hours = int(context.args[0])
         places = int(context.args[1])
-        # Parse event datetime (can be "YYYY-MM-DD HH:MM")
-        event_dt_str = f"{context.args[2]} {context.args[3]}"
+        # Normalize Unicode dashes (iOS autocorrect) to ASCII hyphens before parsing
+        date_part = context.args[2].replace('–', '-').replace('—', '-').replace('‒', '-')
+        time_part = context.args[3].replace('.', ':')
+        event_dt_str = f"{date_part} {time_part}"
+        logging.info(f"Parsing event datetime: {event_dt_str!r} (raw args: {context.args[2]!r} {context.args[3]!r})")
         event_start_time = datetime.strptime(event_dt_str, '%Y-%m-%d %H:%M')
-        # If no timezone info, assume UTC or local - but let's be consistent with get_now()
-        # get_now() is datetime.now(ZoneInfo("UTC"))
-        event_start_time = event_start_time.replace(tzinfo=ZoneInfo("UTC"))
-        
+        event_start_time = event_start_time.replace(tzinfo=ZoneInfo("Europe/Zurich"))
         timeout_hours = 24
-    except (IndexError, ValueError):
+    except (IndexError, ValueError) as e:
+        logging.warning(f"Failed to parse /open args {context.args!r}: {e}")
         await update.message.reply_text(messages.USAGE_OPEN)
         conn.close()
         return
