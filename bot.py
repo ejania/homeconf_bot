@@ -392,8 +392,15 @@ async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     schedule_reminders(event['id'], event_start_time)
 
+    end_time_local = end_time.astimezone(ZoneInfo("Europe/Zurich"))
+    event_start_local = event_start_time.astimezone(ZoneInfo("Europe/Zurich"))
     await update.message.reply_text(
-        messages.REGISTRATION_OPENED.format(places=places, end_time=end_time.strftime('%H:%M:%S')),
+        messages.REGISTRATION_OPENED.format(
+            places=places,
+            hours=hours,
+            end_time=end_time_local.strftime('%d %b %Y, %H:%M'),
+            event_date=event_start_local.strftime('%d %b %Y, %H:%M'),
+        ),
         parse_mode='Markdown'
     )
 
