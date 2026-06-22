@@ -1815,7 +1815,7 @@ async def post_init(app):
         BotCommand("status", messages.DESC_STATUS),
         BotCommand("who", messages.DESC_WHO),
         BotCommand("unregister", messages.DESC_UNREGISTER),
-        BotCommand("list", messages.DESC_LIST),
+        BotCommand("stats", messages.DESC_LIST),
         BotCommand("invite", messages.DESC_INVITE),
         BotCommand("pair", messages.DESC_PAIR),
     ]
@@ -1926,7 +1926,7 @@ def main():
     application.add_handler(CommandHandler("pair", pair_command))
     application.add_handler(CommandHandler("unregister", unregister))
     application.add_handler(CommandHandler("status", status))
-    application.add_handler(CommandHandler("list", list_participants))
+    application.add_handler(CommandHandler("stats", list_participants))
     application.add_handler(CommandHandler("who", who))
     application.add_handler(CommandHandler("reset", reset_event))
     application.add_handler(CallbackQueryHandler(callback_handler))
