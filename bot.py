@@ -1206,7 +1206,7 @@ async def unregister(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     old_status = reg['status']
     
-    if event['status'] in ('CLOSED', 'REVIEW') and old_status in ('ACCEPTED', 'INVITED'):
+    if old_status == 'WAITLIST' or (event['status'] in ('CLOSED', 'REVIEW') and old_status in ('ACCEPTED', 'INVITED')):
         keyboard = [
             [InlineKeyboardButton("Да, я не приду", callback_data=f"uyes_{reg['id']}"),
              InlineKeyboardButton("Нет, я приду!", callback_data=f"uno_{reg['id']}")]

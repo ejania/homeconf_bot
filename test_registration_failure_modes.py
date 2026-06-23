@@ -173,8 +173,8 @@ class TestUnregisterEdgeCases(unittest.IsolatedAsyncioTestCase):
         self.real_conn.close()
         self.patcher.stop()
 
-    async def test_unregister_waitlist_requires_no_confirmation(self):
-        """A WAITLIST user can unregister immediately — no confirmation dialog, no invite triggered."""
+    async def test_unregister_waitlist_requires_confirmation(self):
+        """A WAITLIST user must see a confirmation dialog before being unregistered."""
         cursor = self.real_conn.cursor()
         cursor.execute("INSERT INTO events (status, total_places) VALUES ('CLOSED', 5)")
         event_id = cursor.lastrowid
@@ -197,12 +197,12 @@ class TestUnregisterEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         await unregister(update, context)
 
+        # Status unchanged — confirmation dialog was shown, not immediate unregister
         cursor.execute("SELECT status FROM registrations WHERE id = ?", (reg_id,))
-        self.assertEqual(cursor.fetchone()['status'], 'UNREGISTERED')
-        update.message.reply_text.assert_called_with(messages.UNREGISTERED_SUCCESS)
-        # No InlineKeyboardMarkup call (which would be the confirm dialog)
-        for call in update.message.reply_text.call_args_list:
-            self.assertNotEqual(call[0][0], messages.UNREGISTER_CONFIRM)
+        self.assertEqual(cursor.fetchone()['status'], 'WAITLIST')
+        # Confirmation dialog was shown
+        call_args = update.message.reply_text.call_args
+        self.assertEqual(call_args[0][0], messages.UNREGISTER_CONFIRM)
 
     async def test_unregister_accepted_in_review_requires_confirmation(self):
         """An ACCEPTED user in REVIEW state must see the confirmation dialog, same as CLOSED."""
