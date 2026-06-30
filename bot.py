@@ -459,6 +459,7 @@ async def send_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Notify winners
     cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'ACCEPTED' AND notified_at IS NULL", (event_id,))
     winners = cursor.fetchall()
+    winner_failures = []
     for reg in winners:
         try:
             if reg['user_id']:
@@ -466,20 +467,24 @@ async def send_invites(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (get_now(), reg['id']))
         except Exception as e:
             logging.error(f"Failed to notify winner {reg['user_id']}: {e}")
+            winner_failures.append((reg['username'], reg['user_id'], str(e)))
+    await _report_send_failures(winner_failures, "победители лотереи")
 
     # Notify waitlist
     cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND notified_at IS NULL", (event_id,))
     losers = cursor.fetchall()
+    waitlist_failures = []
     for reg in losers:
         try:
             if reg['user_id']:
-                # We need to find their actual position in the waitlist
                 cursor.execute("SELECT COUNT(*) as pos FROM registrations WHERE event_id = ? AND status = 'WAITLIST' AND priority < ?", (event_id, reg['priority']))
                 pos = cursor.fetchone()['pos']
                 await context.bot.send_message(reg['user_id'], messages.WAITLIST_NOTIFICATION.format(position=pos + 1))
                 cursor.execute("UPDATE registrations SET notified_at = ? WHERE id = ?", (get_now(), reg['id']))
         except Exception as e:
             logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
+            waitlist_failures.append((reg['username'], reg['user_id'], str(e)))
+    await _report_send_failures(waitlist_failures, "вейтлист")
 
     cursor.execute("UPDATE events SET status = 'CLOSED' WHERE id = ?", (event_id,))
     conn.commit()
@@ -538,21 +543,40 @@ async def reset_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(messages.RESET_SUCCESS)
 
+async def _report_send_failures(failures, label):
+    """Send a summary of failed message deliveries to all admins."""
+    if not failures or not ADMIN_IDS:
+        return
+    lines = [f"⚠️ Не удалось доставить сообщение ({label}):"]
+    for username, user_id, err in failures:
+        name = f"@{username}" if username else f"id:{user_id}"
+        lines.append(f"• {name} — {err}")
+    text = "\n".join(lines)
+    for admin_id in ADMIN_IDS:
+        try:
+            await application.bot.send_message(admin_id, text)
+        except Exception as e:
+            logging.error(f"Failed to notify admin {admin_id} of send failures: {e}")
+
+
 async def send_reminder_job(event_id, days_left):
     logging.info(f"Sending {days_left}-day reminder for event {event_id}")
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND user_id IS NOT NULL", (event_id,))
+    cursor.execute("SELECT user_id, username FROM registrations WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND user_id IS NOT NULL", (event_id,))
     users = cursor.fetchall()
     conn.close()
     
     msg = messages.REMINDER_5_DAYS if days_left == 5 else messages.REMINDER_2_DAYS
-    
+
+    failures = []
     for row in users:
         try:
             await application.bot.send_message(row['user_id'], msg)
         except Exception as e:
             logging.error(f"Failed to send {days_left}-day reminder to user {row['user_id']}: {e}")
+            failures.append((row['username'], row['user_id'], str(e)))
+    await _report_send_failures(failures, f"напоминание за {days_left} дн.")
 
 def schedule_reminders(event_id, event_start_time):
     if not event_start_time:
@@ -1342,6 +1366,7 @@ async def invite_next(event_id):
             )
         except Exception as e:
             logging.error(f"Failed to notify waitlist user {reg['user_id']}: {e}")
+            await _report_send_failures([(reg['username'], reg['user_id'], str(e))], "приглашение из вейтлиста")
 
         scheduler.add_job(
             check_timeout_job,
