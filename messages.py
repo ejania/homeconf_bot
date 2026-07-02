@@ -43,7 +43,7 @@ INVALID_INVITATION = "Приглашение уже недействительн
 NOT_REGISTERED = "Ты пока не регистрировался."
 NO_EVENTS_FOUND = "Событий пока нет."
 EVENT_NOT_STARTED = "Событие ещё не началось."
-PRIVATE_CHAT_ONLY = "Эту команду /{command} лучше использовать в личке со мной."
+PRIVATE_CHAT_ONLY = "Команду /{command} лучше использовать в личке со мной."
 SPEAKER_UNREGISTER_ERROR = "Если ты передумал(а) выступать, напиши, пожалуйста, организаторам напрямую. Я тут бессилен 🤷‍♂️"
 
 # Success Messages

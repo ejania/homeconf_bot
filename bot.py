@@ -129,7 +129,7 @@ async def ensure_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             update.effective_user.id, 
-            messages.PRIVATE_CHAT_ONLY.format(command=context.args[0] if context.args else 'command')
+            messages.PRIVATE_CHAT_ONLY.format(command=update.message.text.split()[0].lstrip('/').split('@')[0] if update.message and update.message.text else 'команду')
         )
     except Exception:
         # User hasn't started the bot, so we can't DM. 
