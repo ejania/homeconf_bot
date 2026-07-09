@@ -258,5 +258,33 @@ class TestWaitlistPromotion(unittest.IsolatedAsyncioTestCase):
                 cursor.execute("SELECT status FROM registrations WHERE user_id = 101")
                 self.assertEqual(cursor.fetchone()['status'], 'WAITLIST')
 
+    async def test_naive_event_start_interpreted_as_zurich(self):
+        # Regression: a naive (tz-less) event_start_time is a wall-clock time from
+        # /open and must be interpreted as Europe/Zurich, not UTC. If it were read
+        # as UTC, the Zurich offset would push the start 1-2h later and invites
+        # would keep going right up to the real start (the July 2026 incident).
+        cursor = self.real_conn.cursor()
+        from bot import get_now
+        from datetime import timedelta
+
+        # Wall-clock start 1.5h from now. As Zurich -> 1.5h away -> STOP.
+        # As UTC -> +offset later -> >2h away -> would (wrongly) invite.
+        naive_start = (get_now() + timedelta(hours=1.5)).replace(tzinfo=None)
+        cursor.execute(
+            "INSERT INTO events (chat_id, status, total_places, event_start_time, waitlist_timeout_hours) VALUES (123, 'CLOSED', 1, ?, 24)",
+            (naive_start.strftime('%Y-%m-%d %H:%M:%S'),),
+        )
+        event_id = cursor.lastrowid
+        cursor.execute("INSERT INTO registrations (event_id, user_id, status, priority) VALUES (?, 101, 'WAITLIST', 0)", (event_id,))
+        self.real_conn.commit()
+
+        with patch('bot.application') as mock_app:
+            mock_app.bot.send_message = AsyncMock()
+            with patch('bot.scheduler'):
+                await invite_next(event_id)
+                mock_app.bot.send_message.assert_not_called()
+                cursor.execute("SELECT status FROM registrations WHERE user_id = 101")
+                self.assertEqual(cursor.fetchone()['status'], 'WAITLIST')
+
 if __name__ == '__main__':
     unittest.main()

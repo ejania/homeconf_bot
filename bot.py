@@ -585,8 +585,11 @@ def schedule_reminders(event_id, event_start_time):
     if isinstance(event_start_time, str):
         event_start_time = datetime.fromisoformat(event_start_time)
     if event_start_time.tzinfo is None:
-        event_start_time = event_start_time.replace(tzinfo=ZoneInfo("UTC"))
-        
+        # Naive values are wall-clock event times entered via /open, which are
+        # interpreted as Europe/Zurich (see open_event_command). Assuming UTC here
+        # would shift the start by the Zurich offset and skew reminders.
+        event_start_time = event_start_time.replace(tzinfo=ZoneInfo("Europe/Zurich"))
+
     now = get_now()
     
     reminder_5_time = event_start_time - timedelta(days=5)
@@ -1309,7 +1312,10 @@ async def invite_next(event_id):
         if isinstance(event_start, str):
             event_start = datetime.fromisoformat(event_start)
         if event_start.tzinfo is None:
-            event_start = event_start.replace(tzinfo=ZoneInfo("UTC"))
+            # Naive values are wall-clock event times entered via /open, which are
+            # interpreted as Europe/Zurich (see open_event_command). Assuming UTC here
+            # would shift the start by the Zurich offset and let invites run too late.
+            event_start = event_start.replace(tzinfo=ZoneInfo("Europe/Zurich"))
 
         time_to_event = event_start - now
 
