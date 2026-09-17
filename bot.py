@@ -834,14 +834,15 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if there is a pending invite by username (without user_id)
     if update.effective_user.username:
         cursor.execute(
-            "SELECT * FROM registrations WHERE event_id = ? AND username = ? AND guest_of_user_id IS NOT NULL AND user_id IS NULL",
-            (event['id'], update.effective_user.username)
+            # Speakers type the guest's username by hand, so the case may differ from the real one
+            "SELECT * FROM registrations WHERE event_id = ? AND LOWER(username) = ? AND guest_of_user_id IS NOT NULL AND user_id IS NULL",
+            (event['id'], update.effective_user.username.lower())
         )
         pending_invite = cursor.fetchone()
         if pending_invite:
             cursor.execute(
-                "UPDATE registrations SET user_id = ?, chat_id = ?, first_name = ?, signup_time = ? WHERE id = ?",
-                (update.effective_user.id, update.effective_chat.id, update.effective_user.first_name, get_now(), pending_invite['id'])
+                "UPDATE registrations SET user_id = ?, chat_id = ?, first_name = ?, username = ?, signup_time = ? WHERE id = ?",
+                (update.effective_user.id, update.effective_chat.id, update.effective_user.first_name, update.effective_user.username, get_now(), pending_invite['id'])
             )
             conn.commit()
             log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'REGISTER_GUEST', 'Claimed guest spot')
@@ -1183,12 +1184,14 @@ async def invite_guest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_details = f'Guest: {guest_username}'
         
         # Decide which message to show based on whether it was a phone number
+        bot_link = f"https://t.me/{context.bot.username}"
         if is_phone:
-            bot_username = context.bot.username
-            link = f"https://t.me/{bot_username}?start={invite_token}"
+            link = f"{bot_link}?start={invite_token}"
             await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_LINK.format(link=link))
+            await update.message.reply_text(messages.GUEST_FORWARD_LINK_TEXT.format(link=link))
         else:
-            await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_NEW.format(username=guest_username))
+            await update.message.reply_text(old_guest_message + messages.GUEST_INVITED_NEW.format(username=guest_username, bot_link=bot_link))
+            await update.message.reply_text(messages.GUEST_FORWARD_TEXT.format(bot_link=bot_link))
  
     conn.commit()
     conn.close()

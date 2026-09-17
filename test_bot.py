@@ -216,7 +216,10 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reg['guest_of_user_id'], 999)
         self.assertIsNone(reg['user_id'])
         
-        update.message.reply_text.assert_called_with(messages.GUEST_INVITED_NEW.format(username="guest_user"))
+        bot_link = f"https://t.me/{context.bot.username}"
+        update.message.reply_text.assert_any_call(messages.GUEST_INVITED_NEW.format(username="guest_user", bot_link=bot_link))
+        # The last message is a ready-to-forward text telling the guest to open the bot and /register
+        update.message.reply_text.assert_called_with(messages.GUEST_FORWARD_TEXT.format(bot_link=bot_link))
 
     async def test_invite_guest_not_speaker(self):
         cursor = self.real_conn.cursor()
@@ -367,8 +370,9 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         await invite_guest(update, context)
         
         # Verify correct reply is sent (combination of replaced message and new invite message)
-        expected_msg = messages.GUEST_REPLACED.format(old_username='first_guest') + "\n\n" + messages.GUEST_INVITED_NEW.format(username='second_guest')
-        update.message.reply_text.assert_called_with(expected_msg)
+        bot_link = f"https://t.me/{context.bot.username}"
+        expected_msg = messages.GUEST_REPLACED.format(old_username='first_guest') + "\n\n" + messages.GUEST_INVITED_NEW.format(username='second_guest', bot_link=bot_link)
+        update.message.reply_text.assert_any_call(expected_msg)
         
         # Verify db state: first_guest should be gone, second_guest should be there
         cursor.execute("SELECT * FROM registrations WHERE event_id = ? AND guest_of_user_id = ?", (event_id, 999))
@@ -399,6 +403,37 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         await register(update, context)
         
         update.message.reply_text.assert_called_with(messages.ALREADY_INVITED_HAS_PLACE)
+
+    async def test_guest_claims_invite_with_different_username_case(self):
+        cursor = self.real_conn.cursor()
+        cursor.execute("INSERT INTO events (chat_id, status, total_places) VALUES (123, 'PRE_OPEN', 10)")
+        event_id = cursor.lastrowid
+        # Speaker typed the username with a different case than the guest's real one
+        cursor.execute(
+            "INSERT INTO registrations (event_id, username, status, guest_of_user_id) VALUES (?, ?, ?, ?)",
+            (event_id, 'Guest_User', 'ACCEPTED', 999)
+        )
+        self.real_conn.commit()
+
+        update = MagicMock()
+        update.effective_chat.type = "private"
+        update.effective_chat.id = 777
+        update.effective_user.id = 777
+        update.effective_user.username = "guest_user"
+        update.effective_user.first_name = "Guest"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.bot.get_chat_member = AsyncMock(return_value=MagicMock(status="left"))
+
+        await register(update, context)
+
+        cursor.execute("SELECT * FROM registrations WHERE event_id = ?", (event_id,))
+        regs = cursor.fetchall()
+        self.assertEqual(len(regs), 1)
+        self.assertEqual(regs[0]['user_id'], 777)
+        self.assertEqual(regs[0]['username'], 'guest_user')
+        self.assertEqual(regs[0]['status'], 'ACCEPTED')
 
     async def test_commands_restricted_to_private(self):
         # Mock group chat update

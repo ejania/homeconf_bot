@@ -156,7 +156,8 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Verify Success
         update.message.reply_text.assert_called()
-        msg = update.message.reply_text.call_args[0][0]
+        # First reply is the invite confirmation, the second one is the ready-to-forward text
+        msg = update.message.reply_text.call_args_list[0][0][0]
         self.assertIn("GuestB", msg)
         self.assertNotIn("уже позвал", msg)
 
