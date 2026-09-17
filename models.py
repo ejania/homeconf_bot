@@ -51,6 +51,7 @@ def init_db():
             event_id INTEGER,
             username TEXT, -- lowercased for matching
             first_name TEXT,
+            user_id INTEGER, -- Telegram user ID, filled by import_speakers.py
             FOREIGN KEY (event_id) REFERENCES events (id)
         )
     ''')
@@ -88,6 +89,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE speakers ADD COLUMN first_name TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE speakers ADD COLUMN user_id INTEGER")
     except sqlite3.OperationalError:
         pass
 

@@ -62,11 +62,14 @@ async def main():
             
             # Check if already exists to prevent duplicates
             cursor.execute("SELECT id FROM speakers WHERE event_id = ? AND username = ?", (event_id, identifier))
-            if cursor.fetchone():
+            existing = cursor.fetchone()
+            if existing:
+                # Backfill the Telegram ID for speakers imported before user_id was stored
+                cursor.execute("UPDATE speakers SET user_id = ? WHERE id = ? AND user_id IS NULL", (user.id, existing[0]))
                 skipped += 1
                 continue
                 
-            cursor.execute("INSERT INTO speakers (event_id, username, first_name) VALUES (?, ?, ?)", (event_id, identifier, first_name))
+            cursor.execute("INSERT INTO speakers (event_id, username, first_name, user_id) VALUES (?, ?, ?, ?)", (event_id, identifier, first_name, user.id))
             inserted += 1
             
         conn.commit()

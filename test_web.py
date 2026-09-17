@@ -1,3 +1,4 @@
+import re
 import base64
 import unittest
 import sqlite3
@@ -23,7 +24,7 @@ class TestWebDashboard(unittest.TestCase):
         
         cursor = self.conn.cursor()
         cursor.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, status TEXT, total_places INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
-        cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, first_name TEXT)")
+        cursor.execute("CREATE TABLE speakers (id INTEGER PRIMARY KEY, event_id INTEGER, username TEXT, first_name TEXT, user_id INTEGER)")
         cursor.execute("CREATE TABLE registrations (id INTEGER PRIMARY KEY, event_id INTEGER, user_id INTEGER, username TEXT, first_name TEXT, status TEXT, guest_of_user_id INTEGER, partner_reg_id INTEGER, signup_time DATETIME, priority INTEGER)")
         cursor.execute("CREATE TABLE action_logs (id INTEGER PRIMARY KEY, event_id INTEGER, timestamp DATETIME, username TEXT, first_name TEXT, user_id INTEGER, action TEXT, details TEXT)")
         
@@ -61,6 +62,24 @@ class TestWebDashboard(unittest.TestCase):
         self.assertIn("Bob", html)
         self.assertIn("Charlie", html)
         self.assertIn("SpeakerDave", html)
+
+    def test_guest_inviter_resolved_from_speakers(self):
+        cursor = self.conn.cursor()
+        # Inviter never appears in registrations/action_logs with a username: only speakers knows them
+        cursor.execute("INSERT INTO speakers (event_id, username, first_name, user_id) VALUES (1, 'renata_speaker', 'Renata', 555)")
+        cursor.execute("INSERT INTO registrations (event_id, username, status, guest_of_user_id) VALUES (1, 'guest_one', 'ACCEPTED', 555)")
+        # Inviter has no Telegram username at all: speakers stores the numeric ID as username
+        cursor.execute("INSERT INTO speakers (event_id, username, first_name, user_id) VALUES (1, '777', 'NoHandleNina', 777)")
+        cursor.execute("INSERT INTO registrations (event_id, username, status, guest_of_user_id) VALUES (1, 'guest_two', 'ACCEPTED', 777)")
+        self.conn.commit()
+
+        html = self.client.get('/').data.decode()
+
+        def invited_by(guest):
+            return re.search(rf"<td>{guest}</td>\s*<td>(.*?)</td>", html).group(1)
+
+        self.assertEqual(invited_by("guest_one"), "@renata_speaker")
+        self.assertEqual(invited_by("guest_two"), "NoHandleNina")
 
     def test_scroll_persistence_script_present(self):
         response = self.client.get('/')

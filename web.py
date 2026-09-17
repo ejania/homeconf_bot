@@ -194,7 +194,7 @@ TEMPLATE = """
                             <tr>
                                 <td>{{ r['first_name'] or '—' }}</td>
                                 <td>{{ r['username'] or '—' }}</td>
-                                <td>@{{ r['speaker_username'] or r['guest_of_user_id'] }}</td>
+                                <td>{% if r['speaker_username'] %}@{{ r['speaker_username'] }}{% else %}{{ r['speaker_first_name'] or r['guest_of_user_id'] }}{% endif %}</td>
                             </tr>
                             {% endfor %}
                             {% if not invitees %}<tr><td colspan="3" class="muted">No guests</td></tr>{% endif %}
@@ -321,13 +321,19 @@ def dashboard():
             speakers = cursor.fetchall()
             
             cursor.execute("""
-                SELECT r.*, 
+                SELECT r.*,
                        COALESCE(
                            (SELECT username FROM registrations WHERE user_id = r.guest_of_user_id AND username IS NOT NULL LIMIT 1),
-                           (SELECT username FROM action_logs WHERE user_id = r.guest_of_user_id AND username IS NOT NULL ORDER BY id DESC LIMIT 1)
-                       ) as speaker_username 
-                FROM registrations r 
-                WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND guest_of_user_id IS NOT NULL 
+                           (SELECT username FROM action_logs WHERE user_id = r.guest_of_user_id AND username IS NOT NULL ORDER BY id DESC LIMIT 1),
+                           -- speakers without a Telegram username are stored with their numeric ID as username
+                           (SELECT s.username FROM speakers s WHERE s.user_id = r.guest_of_user_id AND s.username GLOB '*[^0-9]*' ORDER BY s.id DESC LIMIT 1)
+                       ) as speaker_username,
+                       COALESCE(
+                           (SELECT s.first_name FROM speakers s WHERE s.user_id = r.guest_of_user_id AND s.first_name IS NOT NULL ORDER BY s.id DESC LIMIT 1),
+                           (SELECT first_name FROM action_logs WHERE user_id = r.guest_of_user_id AND first_name IS NOT NULL ORDER BY id DESC LIMIT 1)
+                       ) as speaker_first_name
+                FROM registrations r
+                WHERE event_id = ? AND status IN ('ACCEPTED', 'INVITED') AND guest_of_user_id IS NOT NULL
                 ORDER BY signup_time ASC
             """, (event['id'],))
             invitees = cursor.fetchall()
