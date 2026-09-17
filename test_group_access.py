@@ -125,5 +125,32 @@ class TestGroupAccess(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(event)
             self.assertEqual(event['speakers_group_id'], "888")
 
+    async def test_create_event_reports_expired_userbot_session(self):
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.effective_user.id = 999
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.args = ["valid_group"]
+
+        with patch('bot.is_admin', return_value=True):
+            chat_mock = MagicMock()
+            chat_mock.id = 888
+            chat_mock.title = "Valid Group"
+            context.bot.get_chat = AsyncMock(return_value=chat_mock)
+
+            with patch('asyncio.create_subprocess_exec', new_callable=AsyncMock) as mock_exec:
+                mock_proc = MagicMock()
+                mock_proc.communicate = AsyncMock(return_value=(b'', b'Traceback...\nEOFError: EOF when reading a line'))
+                mock_proc.returncode = 1
+                mock_exec.return_value = mock_proc
+
+                await create_event(update, context)
+
+        last_msg = update.message.reply_text.call_args_list[-1][0][0]
+        self.assertIn("session has expired", last_msg)
+        self.assertIn("import_speakers.py 888", last_msg)
+
 if __name__ == '__main__':
     unittest.main()

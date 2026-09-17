@@ -30,6 +30,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+# httpx logs every request URL at INFO, and Telegram API URLs contain the bot token
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -335,7 +337,22 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             log_action(event_id, None, "System", None, "SPEAKERS_IMPORT_FAIL", f"Error: {stderr.decode().strip()}")
             logging.error(f"Error importing speakers: {stderr.decode()}")
-            await update.message.reply_text("⚠️ There was an issue importing speakers. Are you sure you logged in to the userbot via SSH?")
+            relogin_cmd = f"ssh -t devbox 'sudo docker exec -it homeconf_bot python import_speakers.py {actual_group_id}'"
+            if "EOFError" in stderr.decode():
+                # Telethon prompted for a phone number: the userbot session is no longer authorized
+                await update.message.reply_text(
+                    "⚠️ Speakers were not imported: the userbot's Telegram session has expired. "
+                    "The event itself is created. Log in again and import by running:\n"
+                    f"{relogin_cmd}"
+                )
+            else:
+                error_lines = stderr.decode().strip().splitlines()
+                last_error = error_lines[-1][:300] if error_lines else "unknown error"
+                await update.message.reply_text(
+                    f"⚠️ Speakers were not imported: {last_error}\n"
+                    "The event itself is created. To retry the import, run:\n"
+                    f"{relogin_cmd}"
+                )
     except Exception as e:
         logging.error(f"Exception running import_speakers.py: {e}")
         await update.message.reply_text("⚠️ Could not run the speaker import script.")
