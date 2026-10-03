@@ -8,6 +8,7 @@ import string
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -414,6 +415,15 @@ async def _join_raffle(update: Update, context: ContextTypes.DEFAULT_TYPE, token
     log_action(event['id'], user.id, user.username, user.first_name, 'RAFFLE_JOIN')
     await update.message.reply_text(messages.RAFFLE_JOINED.format(deadline=_fmt_deadline(event['raffle_deadline'])))
 
+RAFFLE_TEXT_RE = re.compile(r"^\W*розыгрыш\s+([a-z0-9]{4,16})\W*$", re.IGNORECASE)
+
+async def raffle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'Розыгрыш <token>' sent as plain text (pre-filled by the link at the end of the feedback form)."""
+    m = RAFFLE_TEXT_RE.match(update.message.text or "")
+    if not m or update.effective_chat.type != "private":
+        return
+    await _join_raffle(update, context, m.group(1))
+
 async def raffle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private(update, context):
         return
@@ -455,7 +465,9 @@ async def raffle_open_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn.commit()
     conn.close()
     log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'RAFFLE_OPEN', f'until {deadline.isoformat()}')
-    link = f"https://t.me/{context.bot.username}?start=fb_{token}"
+    # ?text= pre-fills the message in the chat input, which works on every client;
+    # ?start= deep links show no "Start" button on desktop when the chat already exists
+    link = f"https://t.me/{context.bot.username}?text=" + quote(f"Розыгрыш {token}")
     await update.message.reply_text(messages.RAFFLE_OPENED.format(deadline=_fmt_deadline(deadline.isoformat()), link=link, token=token))
 
 def _raffle_winner_names(rows):
@@ -2193,6 +2205,7 @@ def main():
     application.add_handler(CommandHandler("raffle_open", raffle_open_command))
     application.add_handler(CommandHandler("raffle_draw", raffle_draw_command))
     application.add_handler(CommandHandler("raffle_status", raffle_status_command))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex(RAFFLE_TEXT_RE), raffle_text_message))
     application.add_handler(CallbackQueryHandler(callback_handler))
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 

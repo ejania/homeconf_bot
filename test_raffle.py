@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import bot
 from bot import (
     start, raffle_command, raffle_open_command, raffle_draw_command,
-    raffle_status_command, _seat_raffle_winners, get_now,
+    raffle_status_command, raffle_text_message, _seat_raffle_winners, get_now,
 )
 import messages
 
@@ -107,6 +107,19 @@ class TestRaffle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entries(), [ATTENDEE_ID])
         self.assertIn("Ты в розыгрыше", update.message.reply_text.call_args[0][0])
 
+    async def test_attendee_joins_via_prefilled_text(self):
+        update = make_update(ATTENDEE_ID, "attendee")
+        update.message.text = "Розыгрыш tok10"
+        await raffle_text_message(update, make_context())
+        self.assertEqual(self.entries(), [ATTENDEE_ID])
+
+    async def test_unrelated_text_ignored(self):
+        update = make_update(ATTENDEE_ID, "attendee")
+        update.message.text = "привет, розыгрыш когда?"
+        await raffle_text_message(update, make_context())
+        self.assertEqual(self.entries(), [])
+        update.message.reply_text.assert_not_called()
+
     async def test_speaker_joins_via_raffle_command(self):
         update = make_update(SPEAKER_ID, "speaker")
         await raffle_command(update, make_context(["tok10"]))
@@ -159,7 +172,8 @@ class TestRaffle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(event['raffle_token']), 8)
         deadline = bot.datetime.fromisoformat(event['raffle_deadline'])
         self.assertAlmostEqual((deadline - get_now()).total_seconds(), 7 * 86400, delta=60)
-        self.assertIn(f"https://t.me/testbot?start=fb_{event['raffle_token']}", update.message.reply_text.call_args[0][0])
+        self.assertIn("https://t.me/testbot?text=", update.message.reply_text.call_args[0][0])
+        self.assertIn(f"/raffle {event['raffle_token']}", update.message.reply_text.call_args[0][0])
 
     async def test_raffle_open_again_keeps_token(self):
         update = make_update(ADMIN_ID, "admin")
