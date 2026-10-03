@@ -112,6 +112,44 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Feedback-form raffle: a per-event token shown at the end of the (anonymous) form,
+    # entries are people who claimed it, winners get a guaranteed spot at the next event.
+    for stmt in (
+        "ALTER TABLE events ADD COLUMN raffle_token TEXT",
+        "ALTER TABLE events ADD COLUMN raffle_deadline DATETIME",
+    ):
+        try:
+            cursor.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS raffle_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,
+            user_id INTEGER,
+            username TEXT,
+            first_name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (event_id, user_id),
+            FOREIGN KEY (event_id) REFERENCES events (id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS raffle_winners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,            -- event whose feedback raffle was won
+            user_id INTEGER,
+            username TEXT,
+            first_name TEXT,
+            drawn_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            claimed_event_id INTEGER,    -- event where the prize spot was granted
+            burned INTEGER DEFAULT 0,    -- 1 if the winner turned out to be a speaker at the next event
+            FOREIGN KEY (event_id) REFERENCES events (id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 

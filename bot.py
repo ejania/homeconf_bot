@@ -88,6 +88,9 @@ application = None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         token = context.args[0]
+        if token.startswith("fb_"):
+            await _join_raffle(update, context, token[3:])
+            return
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM registrations WHERE invite_token = ?", (token,))
@@ -356,6 +359,208 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Exception running import_speakers.py: {e}")
         await update.message.reply_text("⚠️ Could not run the speaker import script.")
+
+    if not is_test:
+        try:
+            lines = await _seat_raffle_winners(event_id, update.effective_user.id, context)
+            if lines:
+                await update.message.reply_text(messages.RAFFLE_SEATED_ADMIN.format(lines="\n".join(lines)))
+        except Exception as e:
+            logging.error(f"Failed to seat raffle winners for event {event_id}: {e}")
+
+# ---------------- Feedback-form raffle ----------------
+
+def _fmt_deadline(deadline_str):
+    return datetime.fromisoformat(deadline_str).astimezone(ZoneInfo("Europe/Zurich")).strftime("%d.%m %H:%M")
+
+async def _join_raffle(update: Update, context: ContextTypes.DEFAULT_TYPE, token: str):
+    user = update.effective_user
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE raffle_token = ?", (token.strip().lower(),))
+    event = cursor.fetchone()
+    if not event:
+        await update.message.reply_text(messages.RAFFLE_BAD_TOKEN)
+        conn.close()
+        return
+    if datetime.fromisoformat(event['raffle_deadline']) < get_now():
+        await update.message.reply_text(messages.RAFFLE_CLOSED)
+        conn.close()
+        return
+
+    cursor.execute(
+        "SELECT id FROM registrations WHERE event_id = ? AND user_id = ? AND status = 'ACCEPTED'",
+        (event['id'], user.id)
+    )
+    attended = cursor.fetchone() is not None or await _is_speaker_user(event, user.id, user.username, cursor, context)
+    if not attended:
+        await update.message.reply_text(messages.RAFFLE_NOT_ATTENDEE)
+        log_action(event['id'], user.id, user.username, user.first_name, 'RAFFLE_JOIN_FAIL', 'Not an attendee')
+        conn.close()
+        return
+
+    cursor.execute("SELECT id FROM raffle_entries WHERE event_id = ? AND user_id = ?", (event['id'], user.id))
+    if cursor.fetchone():
+        await update.message.reply_text(messages.RAFFLE_ALREADY_JOINED)
+        conn.close()
+        return
+
+    cursor.execute(
+        "INSERT INTO raffle_entries (event_id, user_id, username, first_name) VALUES (?, ?, ?, ?)",
+        (event['id'], user.id, user.username, user.first_name)
+    )
+    conn.commit()
+    conn.close()
+    log_action(event['id'], user.id, user.username, user.first_name, 'RAFFLE_JOIN')
+    await update.message.reply_text(messages.RAFFLE_JOINED.format(deadline=_fmt_deadline(event['raffle_deadline'])))
+
+async def raffle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await ensure_private(update, context):
+        return
+    if context.args:
+        await _join_raffle(update, context, context.args[0])
+        return
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE raffle_token IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+    event = cursor.fetchone()
+    if not event:
+        await update.message.reply_text(messages.RAFFLE_USAGE)
+        conn.close()
+        return
+    cursor.execute("SELECT id FROM raffle_entries WHERE event_id = ? AND user_id = ?", (event['id'], update.effective_user.id))
+    joined = cursor.fetchone() is not None
+    conn.close()
+    if joined:
+        await update.message.reply_text(messages.RAFFLE_STATUS_USER_IN.format(deadline=_fmt_deadline(event['raffle_deadline'])))
+    else:
+        await update.message.reply_text(messages.RAFFLE_STATUS_USER_OUT)
+
+async def raffle_open_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
+        return
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE status != 'CANCELLED' ORDER BY created_at DESC LIMIT 1")
+    event = cursor.fetchone()
+    if not event:
+        await update.message.reply_text(messages.RAFFLE_NO_EVENT)
+        conn.close()
+        return
+    # Re-running keeps the token (the form already links to it) and just extends the deadline
+    token = event['raffle_token'] or ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(8))
+    deadline = get_now() + timedelta(days=7)
+    cursor.execute("UPDATE events SET raffle_token = ?, raffle_deadline = ? WHERE id = ?", (token, deadline.isoformat(), event['id']))
+    conn.commit()
+    conn.close()
+    log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'RAFFLE_OPEN', f'until {deadline.isoformat()}')
+    link = f"https://t.me/{context.bot.username}?start=fb_{token}"
+    await update.message.reply_text(messages.RAFFLE_OPENED.format(deadline=_fmt_deadline(deadline.isoformat()), link=link, token=token))
+
+def _raffle_winner_names(rows):
+    return "\n".join(f"• {html.escape(r['first_name'] or '')} (@{r['username']})" if r['username'] else f"• {html.escape(r['first_name'] or str(r['user_id']))}" for r in rows) or "—"
+
+async def raffle_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
+        return
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE raffle_token IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+    event = cursor.fetchone()
+    if not event:
+        await update.message.reply_text(messages.RAFFLE_STATUS_NONE)
+        conn.close()
+        return
+    cursor.execute("SELECT COUNT(*) as c FROM raffle_entries WHERE event_id = ?", (event['id'],))
+    entries = cursor.fetchone()['c']
+    cursor.execute("SELECT * FROM raffle_winners WHERE event_id = ? ORDER BY id", (event['id'],))
+    winners = cursor.fetchall()
+    conn.close()
+    text = messages.RAFFLE_STATUS_ADMIN.format(
+        event_id=event['id'], deadline=_fmt_deadline(event['raffle_deadline']),
+        entries=entries, winners=("\n" + _raffle_winner_names(winners)) if winners else "пока нет"
+    )
+    await update.message.reply_text(text, parse_mode='HTML')
+
+async def raffle_draw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text(messages.ONLY_ADMIN_OPEN)
+        return
+    try:
+        count = int(context.args[0])
+        if count < 1:
+            raise ValueError
+    except (IndexError, ValueError):
+        await update.message.reply_text(messages.RAFFLE_DRAW_USAGE)
+        return
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE raffle_token IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+    event = cursor.fetchone()
+    if not event:
+        await update.message.reply_text(messages.RAFFLE_STATUS_NONE)
+        conn.close()
+        return
+    # Drawing again adds winners; people who already won are not in the pool
+    cursor.execute(
+        "SELECT * FROM raffle_entries WHERE event_id = ? AND user_id NOT IN (SELECT user_id FROM raffle_winners WHERE event_id = ?)",
+        (event['id'], event['id'])
+    )
+    pool = cursor.fetchall()
+    if not pool:
+        await update.message.reply_text(messages.RAFFLE_DRAW_EMPTY)
+        conn.close()
+        return
+    winners = random.sample(pool, min(count, len(pool)))
+    for w in winners:
+        cursor.execute(
+            "INSERT INTO raffle_winners (event_id, user_id, username, first_name) VALUES (?, ?, ?, ?)",
+            (event['id'], w['user_id'], w['username'], w['first_name'])
+        )
+    conn.commit()
+    conn.close()
+    log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'RAFFLE_DRAW', f"{len(winners)} of {len(pool)}: " + ", ".join(str(w['username'] or w['user_id']) for w in winners))
+    failures = []
+    for w in winners:
+        try:
+            await context.bot.send_message(w['user_id'], messages.RAFFLE_WON)
+        except Exception as e:
+            failures.append((w['username'], w['user_id'], str(e)))
+    await update.message.reply_text(messages.RAFFLE_DRAW_RESULT.format(count=len(winners), winners=_raffle_winner_names(winners)), parse_mode='HTML')
+    await _report_send_failures(failures, "победители розыгрыша")
+
+async def _seat_raffle_winners(event_id, admin_user_id, context):
+    """Give unclaimed raffle winners a guaranteed (guest-style) spot at a freshly created event."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE id = ?", (event_id,))
+    event = cursor.fetchone()
+    cursor.execute("SELECT * FROM raffle_winners WHERE claimed_event_id IS NULL AND burned = 0 AND event_id != ? ORDER BY id", (event_id,))
+    winners = cursor.fetchall()
+    lines = []
+    for w in winners:
+        name = f"@{w['username']}" if w['username'] else (w['first_name'] or str(w['user_id']))
+        if await _is_speaker_user(event, w['user_id'], w['username'], cursor, context):
+            cursor.execute("UPDATE raffle_winners SET burned = 1, claimed_event_id = ? WHERE id = ?", (event_id, w['id']))
+            lines.append(messages.RAFFLE_SEATED_LINE_SPEAKER.format(name=name))
+            log_action(event_id, w['user_id'], w['username'], w['first_name'], 'RAFFLE_PRIZE_BURNED', 'Winner is a speaker')
+            continue
+        cursor.execute(
+            "INSERT INTO registrations (event_id, user_id, chat_id, username, first_name, status, guest_of_user_id, signup_time) VALUES (?, ?, ?, ?, ?, 'ACCEPTED', ?, ?)",
+            (event_id, w['user_id'], w['user_id'], w['username'], w['first_name'], admin_user_id, get_now())
+        )
+        cursor.execute("UPDATE raffle_winners SET claimed_event_id = ? WHERE id = ?", (event_id, w['id']))
+        lines.append(messages.RAFFLE_SEATED_LINE_OK.format(name=name))
+        log_action(event_id, w['user_id'], w['username'], w['first_name'], 'RAFFLE_PRIZE_SEATED', 'Guaranteed spot from feedback raffle')
+        try:
+            await context.bot.send_message(w['user_id'], messages.RAFFLE_SEATED)
+        except Exception as e:
+            logging.error(f"Failed to notify raffle winner {w['user_id']}: {e}")
+    conn.commit()
+    conn.close()
+    return lines
 
 async def open_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
@@ -1869,6 +2074,7 @@ async def post_init(app):
         BotCommand("stats", messages.DESC_LIST),
         BotCommand("invite", messages.DESC_INVITE),
         BotCommand("pair", messages.DESC_PAIR),
+        BotCommand("raffle", messages.DESC_RAFFLE),
     ]
     
     admin_commands = user_commands + [
@@ -1877,6 +2083,9 @@ async def post_init(app):
         BotCommand("close", messages.DESC_CLOSE),
         BotCommand("send_invites", messages.DESC_SEND_INVITES),
         BotCommand("reset", messages.DESC_RESET),
+        BotCommand("raffle_open", messages.DESC_RAFFLE_OPEN),
+        BotCommand("raffle_draw", messages.DESC_RAFFLE_DRAW),
+        BotCommand("raffle_status", messages.DESC_RAFFLE_STATUS),
     ]
     
     # Default scope for everyone
@@ -1980,6 +2189,10 @@ def main():
     application.add_handler(CommandHandler("stats", list_participants))
     application.add_handler(CommandHandler("who", who))
     application.add_handler(CommandHandler("reset", reset_event))
+    application.add_handler(CommandHandler("raffle", raffle_command))
+    application.add_handler(CommandHandler("raffle_open", raffle_open_command))
+    application.add_handler(CommandHandler("raffle_draw", raffle_draw_command))
+    application.add_handler(CommandHandler("raffle_status", raffle_status_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
