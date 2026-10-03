@@ -465,9 +465,9 @@ async def raffle_open_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn.commit()
     conn.close()
     log_action(event['id'], update.effective_user.id, update.effective_user.username, update.effective_user.first_name, 'RAFFLE_OPEN', f'until {deadline.isoformat()}')
-    # ?text= pre-fills the message in the chat input, which works on every client;
+    # ?text= pre-fills the command in the chat input, which works on every client;
     # ?start= deep links show no "Start" button on desktop when the chat already exists
-    link = f"https://t.me/{context.bot.username}?text=" + quote(f"Розыгрыш {token}")
+    link = f"https://t.me/{context.bot.username}?text=" + quote(f"/raffle {token}")
     await update.message.reply_text(messages.RAFFLE_OPENED.format(deadline=_fmt_deadline(deadline.isoformat()), link=link, token=token))
 
 def _raffle_winner_names(rows):
